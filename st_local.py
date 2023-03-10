@@ -16,7 +16,7 @@ st.set_page_config(
 #os.chdir("C:/Users/SQLe/U.S. Small Business Administration/Office of Policy Planning and Liaison (OPPL) - Data Lake/")
 #%%
 #define my datasets
-# SBA_match=pd.read_csv("./Mapping Files/SBA_DO_ZIP_matching_table.csv",  converters={'ZIP.Code': str}).drop_duplicates("ZIP.Code")
+SBA_match=pd.read_csv("SBA_DO_ZIP_matching_table.csv",  converters={'ZIP.Code': str}).drop_duplicates("ZIP.Code")
 # SBA_match_pl=pl.from_pandas(SBA_match).lazy()
 # SBGRdir="./SBGR_parquet"
 # list=sorted([file for file in os.listdir(SBGRdir) if "SBGR" in file])
