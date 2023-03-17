@@ -66,34 +66,40 @@ dollars=get_dollars()
 #dollars.to_parquet("dollars.parquet") #COMMENT OUT
 
 
-dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS","SMALL_BUSINESS_DOLLARS","SDB_DOLLARS","WOSB_DOLLARS","CER_HUBZONE_SB_DOLLARS","SRDVOB_DOLLARS"]
+dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS","SMALL_BUSINESS_DOLLARS","SDB_DOLLARS","WOSB_DOLLARS","SRDVOB_DOLLARS","CER_HUBZONE_SB_DOLLARS"]
 #%%
 dollars=dollars.drop(columns="State").rename(columns = {'VENDOR_ADDRESS_STATE_NAME':'State'})
 #%%
 select_dollars=dollars[dollars[var]==select].groupby('FISCAL_YEAR')[dolcols].sum()
+doldict={"TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"Total$","SMALL_BUSINESS_DOLLARS":"SmallBusiness$","SDB_DOLLARS":"SDB$","WOSB_DOLLARS":"WOSB$","CER_HUBZONE_SB_DOLLARS":"HUBZone$","SRDVOB_DOLLARS":"SDVOSB$"}
+select_dollars=select_dollars.rename(columns=doldict)
+#%%
+#%%
+select_pct=select_dollars.iloc[:,1:].div(select_dollars.iloc[:,0], axis=0).multiply(100).round(2)
+select_pct.columns=select_pct.columns.str.replace("$","%",regex=False)
 
-pct_names=['SmallBusiness%', 'SDB%', 'WOSB%','SDVOSB%','HUBZone%']
-select_pct=select_dollars.iloc[:,1:].div(select_dollars.iloc[:,0], axis=0).multiply(100).round(2).set_axis(pct_names, axis='columns', copy=False).reset_index()
-
+#.set_axis(pct_names, axis='columns', copy=False).reset_index()
+#%%
 #show the graph
-SP_long=select_pct.melt(id_vars=['FISCAL_YEAR'],value_vars=pct_names,value_name='Pct',var_name='Category').rename(columns={'FISCAL_YEAR':'FY'})
-fig=px.line(SP_long,x="FY",y="Pct",color='Category'
-            ,    color_discrete_sequence=["blue","red","green", "skyblue","orange"],
+SP_long=select_pct.melt(ignore_index=False).rename(columns={"variable":"Category","value":"Pct"})
+SP_long.index=SP_long.index.astype(str).rename("FY")
+#%%
+pal = ["#002e6d", "#cc0000", "#969696", "#007dbc", "#197e4e", "#f1c400"]
+
+fig=px.line(SP_long,x=SP_long.index,y="Pct",color='Category'
+            ,    color_discrete_sequence=pal
 )
 st.plotly_chart(fig)
-
+#%%
 #display the table
 if (var=="State"): 
     select_display = select.title() 
 else: select_display=str(select)
 st.write(var.replace("."," "), ":", select_display)
 select_dollars.index=select_dollars.index.astype(str)
-select_pct.set_index("FISCAL_YEAR",inplace=True)
 select_pct.index=select_pct.index.astype(str)
 
-st.table(select_dollars.rename(
-	     columns={"TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"Total$","SMALL_BUSINESS_DOLLARS":"SmallBusiness$","SDB_DOLLARS":"SDB$","WOSB_DOLLARS":"WOSB$","CER_HUBZONE_SB_DOLLARS":"HUBZone$","SRDVOB_DOLLARS":"SDVOSB$"},copy=False)
-         .style.format('$ {:,.0f}')
+st.table(select_dollars.style.format('$ {:,.0f}')
 	     )
 st.table(select_pct.style.format('{:.2f}%')
 )
@@ -112,3 +118,5 @@ st.download_button(label="Download Data"
            ,data=select_dollars.join(select_pct).to_csv()
 		   ,file_name=filename
 	   )
+
+# %%
