@@ -1,10 +1,10 @@
 #%%
-#import polars as pl
+import polars as pl
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-#import pyarrow.dataset as ds
-#import os
+import pyarrow.dataset as ds
+import os
 
 st.set_page_config(
     page_title="SBA Local Goaling Dashboard",
@@ -14,6 +14,7 @@ st.set_page_config(
 )
 
 #os.chdir("C:/Users/SQLe/U.S. Small Business Administration/Office of Policy Planning and Liaison (OPPL) - Data Lake/")
+
 #%%
 #bring in the match table
 SBA_match=pd.read_csv("SBA_DO_ZIP_matching_table.csv",  converters={ #./Mapping Files
@@ -23,11 +24,11 @@ SBA_match['VENDOR_ADDRESS_STATE_NAME']=SBA_match["State.Name"].str.upper()
 ZIP_list=SBA_match['ZIP.Code']
 
 #%%
-# SBGRdir="./SBGR_parquet"
-# list=sorted([file for file in os.listdir(SBGRdir) if "SBGR" in file])
-# max_year=list[-1].replace("SBGR_FY","")
-# arrowds=ds.dataset(SBGRdir,format="parquet")
-# plds=pl.scan_ds(arrowds)
+os.chdir("C:\\Users\\SQLe\\Data\\SBGR_final\\Parquet")
+
+SBGRdir="."
+arrowds=ds.dataset(SBGRdir,format="parquet")
+plds=pl.scan_ds(arrowds)
 
 #%%
 max_year=2022 
@@ -114,26 +115,24 @@ single_DO=[x.upper() for x in single_DO]
 dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS","SMALL_BUSINESS_DOLLARS","SDB_DOLLARS","WOSB_DOLLARS","CER_HUBZONE_SB_DOLLARS","SRDVOB_DOLLARS"]
 
 #%%
-
 @st.cache_data
 def get_dollars():
-    dollars=pd.read_parquet("dollars.parquet")
-    # plsingle_Do=pl.Series(single_DO)
-    # plziplist=pl.Series(ZIP_list)
-
-    # plds_zip=plds.filter(
-    #     (pl.col("FISCAL_YEAR")<=int(max_year))).with_columns(
-    #     pl.col("VENDOR_ADDRESS_ZIP_CODE").str.slice(0,5).alias("ZIP5")
-    # ).with_columns(
-    #     pl.when(pl.col('VENDOR_ADDRESS_STATE_NAME').is_in(plsingle_Do))
-    #     .then(pl.col('VENDOR_ADDRESS_STATE_NAME'))
-    #     .when(pl.col('ZIP5').is_in(plziplist))
-    #     .then(pl.col('ZIP5'))
-    #     .otherwise("NA")
-    #     .alias("group"))
-    # dollars=plds_zip.filter((pl.col('group') != "NA") & (pl.col('VENDOR_ADDRESS_STATE_NAME') !="")).groupby(
-	#     "group","FISCAL_YEAR","VENDOR_ADDRESS_STATE_NAME").agg(
-	#     pl.col(dolcols).sum()).collect().to_pandas()
+#    dollars=pd.read_parquet("dollars.parquet")
+    plsingle_Do=pl.Series(single_DO)
+    plziplist=pl.Series(ZIP_list)
+    plds_zip=plds.with_columns(
+        pl.col("VENDOR_ADDRESS_ZIP_CODE").str.slice(0,5).alias("ZIP5")).with_columns(
+        pl.when(pl.col('VENDOR_ADDRESS_STATE_NAME').is_in(plsingle_Do))
+        .then(pl.col('VENDOR_ADDRESS_STATE_NAME'))
+        .when(pl.col('ZIP5').is_in(plziplist))
+        .then(pl.col('ZIP5'))
+        .otherwise("NA")
+        .alias("group"))
+    dollars=plds_zip.filter((pl.col('group') != "NA") & (pl.col('VENDOR_ADDRESS_STATE_NAME') !=""))
+    dollars=dollars.groupby(
+	    "group","FISCAL_YEAR","VENDOR_ADDRESS_STATE_NAME").agg(
+	    pl.col(dolcols).sum())
+    dollars=dollars.collect().to_pandas()
     return dollars
 
 #%%
