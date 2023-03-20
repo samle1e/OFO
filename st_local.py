@@ -16,7 +16,7 @@ st.set_page_config(
 #os.chdir("C:/Users/SQLe/U.S. Small Business Administration/Office of Policy Planning and Liaison (OPPL) - Data Lake/")
 #%%
 #bring in the match table
-SBA_match=pd.read_csv("/SBA_DO_ZIP_matching_table.csv",  converters={ #./Mapping Files
+SBA_match=pd.read_csv("SBA_DO_ZIP_matching_table.csv",  converters={ #./Mapping Files
 	'ZIP.Code': str},usecols=[
 	"ZIP.Code","SBA.District.Office","State.Name"]).drop_duplicates("ZIP.Code")
 SBA_match['VENDOR_ADDRESS_STATE_NAME']=SBA_match["State.Name"].str.upper()
