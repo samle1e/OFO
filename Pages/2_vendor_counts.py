@@ -121,7 +121,7 @@ def get_vendors():
     #                             ,"CONGRESSIONAL_DISTRICT":"Congressional District"})
     # vendors=vendors.rename(vendor_dict)
     # return vendors
-    return pl.scan_parquet("Data/data.parquet")
+    return pl.scan_parquet("./Data/data.parquet")
 #%%
 # vendors=get_vendors().collect()
 # vendors.write_parquet("Data",row_group_size=1000000,use_pyarrow=True,compression="zstd",compression_level=22)
@@ -165,7 +165,7 @@ def get_choices():
 
     # choices=[NAICS_select,agency_select,county_select,CD_select]
     # return choices
-    return json.load(open ('Data/choices.json', 'r'))
+    return json.load(open ('./Data/choices.json', 'r'))
 #%%
 choices=get_choices()
 #json.dump(choices,open('choices.json', 'w'))
