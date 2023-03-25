@@ -2,3 +2,5 @@ polars
 pandas
 streamlit
 plotly
+json
+pyarrow
