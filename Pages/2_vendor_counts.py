@@ -7,16 +7,18 @@ import pyarrow.dataset as ds
 import os
 import pyarrow as pa
 import json
+import plotly.graph_objects as go
 
+# datalake="C:\\Users\\SQLe\\U.S. Small Business Administration\\Office of Policy Planning and Liaison (OPPL) - Data Lake\\"
 
-datalake="C:\\Users\\SQLe\\U.S. Small Business Administration\\Office of Policy Planning and Liaison (OPPL) - Data Lake\\"
+# arrowds=ds.dataset(f"{datalake}/SBGR_parquet",format="parquet",partitioning = ds.HivePartitioning(
+#     pa.schema([("FY", pa.int16())])))
+# plds=pl.scan_ds(arrowds)
 
-arrowds=ds.dataset(f"{datalake}/SBGR_parquet",format="parquet",partitioning = ds.HivePartitioning(
-    pa.schema([("FY", pa.int16())])))
-plds=pl.scan_ds(arrowds)
-
-max_year = int(os.listdir(f"{datalake}/SBGR_parquet")[-1].replace("FY=",""))
-min_year = int(os.listdir(f"{datalake}/SBGR_parquet")[0].replace("FY=",""))
+# max_year = int(os.listdir(f"{datalake}/SBGR_parquet")[-1].replace("FY=",""))
+# min_year = int(os.listdir(f"{datalake}/SBGR_parquet")[0].replace("FY=",""))
+max_year=2022
+min_year=2009
 # %%
 st.set_page_config(
     page_title="SBA Vendor Count",
@@ -80,59 +82,59 @@ state_select=['Alabama','Alaska','Arizona','Arkansas','California','Colorado','C
     'Washington','West Virginia','Wisconsin','Wyoming']
 state_select=[x.upper() for x in state_select]
 #%%
-
 def get_vendors():
+    # vendors=plds.filter((pl.col("TOTAL_SB_ACT_ELIGIBLE_DOLLARS")>0) & (pl.col("FY")<max_year)).select(
+    #     vendorcols+geocols+buyercols+contractcols+["FY"]+[pl.col(dolcols).map(lambda x: x>0)]).with_columns(
+    #         pl.col("VENDOR_ADDRESS_ZIP_CODE").str.slice(0,5).alias("zip")
+    #     )
+    # vendors=vendors.unique()
 
-    vendors=plds.filter((pl.col("TOTAL_SB_ACT_ELIGIBLE_DOLLARS")>0) & (pl.col("FY")<max_year)).select(
-        vendorcols+geocols+buyercols+contractcols+["FY"]+[pl.col(dolcols).map(lambda x: x>0)]).with_columns(
-            pl.col("VENDOR_ADDRESS_ZIP_CODE").str.slice(0,5).alias("zip")
-        )
-    vendors=vendors.unique()
+    # ZIP_match=pl.read_csv("ZIP_to_FIPS_Name_20230322.csv",columns=["FIPS","zip","County","state","bus_ratio","state_names"]
+    #                     ,dtypes={'zip':pl.Utf8, 'FIPS':pl.Utf8}
+    #                     ).sort(by="bus_ratio",descending=True
+    #                     ).drop("bus_ratio").unique(subset="zip",keep="first").lazy()
+    # vendors=vendors.join(ZIP_match,how="left",on="zip").drop(["VENDOR_ADDRESS_ZIP_CODE","zip"])
 
-    ZIP_match=pl.read_csv("ZIP_to_FIPS_Name_20230322.csv",columns=["FIPS","zip","County","state","bus_ratio","state_names"]
-                        ,dtypes={'zip':pl.Utf8, 'FIPS':pl.Utf8}
-                        ).sort(by="bus_ratio",descending=True
-                        ).drop("bus_ratio").unique(subset="zip",keep="first").lazy()
-    vendors=vendors.join(ZIP_match,how="left",on="zip").drop(["VENDOR_ADDRESS_ZIP_CODE","zip"])
+    # vendors=vendors.with_columns(
+    #     pl.when(pl.col("FY")<=2021)
+    #     .then(pl.col("VENDOR_DUNS_NUMBER"))
+    #     .otherwise(pl.col("VENDOR_UEI"))
+    #     .alias("VENDOR_ID")
+    #     ).drop(["VENDOR_DUNS_NUMBER","VENDOR_UEI"])
 
-    vendors=vendors.with_columns(
-        pl.when(pl.col("FY")<=2021)
-        .then(pl.col("VENDOR_DUNS_NUMBER"))
-        .otherwise(pl.col("VENDOR_UEI"))
-        .alias("VENDOR_ID")
-        ).drop(["VENDOR_DUNS_NUMBER","VENDOR_UEI"])
+    #     #set-asides
+    # SBA_set_asides=["SBA","SBP","RSB", "8AN", "SDVOSBC" ,"8A", "HZC","WOSB","SDVOSBS","HZS","EDWOSB"
+    #     ,"WOSBSS","ESB","HS3","EDWOSBSS"]
+    # SBA_socio_asides=SBA_set_asides[3:]
 
-        #set-asides
-    SBA_set_asides=["SBA","SBP","RSB", "8AN", "SDVOSBC" ,"8A", "HZC","WOSB","SDVOSBS","HZS","EDWOSB"
-        ,"WOSBSS","ESB","HS3","EDWOSBSS"]
-    SBA_socio_asides=SBA_set_asides[3:]
+    # vendors=vendors.with_columns(
+    #     pl.when(pl.col('TYPE_OF_SET_ASIDE').is_in(SBA_socio_asides))
+    #         .then(pl.col('TYPE_OF_SET_ASIDE'))
+    #         .when(pl.col('IDV_TYPE_OF_SET_ASIDE').is_in(SBA_set_asides))
+    #         .then(pl.col('IDV_TYPE_OF_SET_ASIDE'))
+    #         .otherwise(pl.col('TYPE_OF_SET_ASIDE'))
+    #         .map_dict(set_aside_dict)
+    #         .alias("set_aside")
+    # ).drop(['IDV_TYPE_OF_SET_ASIDE','TYPE_OF_SET_ASIDE'])
+    # vendors=vendors.rename({"VENDOR_ADDRESS_STATE_NAME":"State","state":"state_abbr","FUNDING_DEPARTMENT_NAME":"Department"
+    #                             ,"FUNDING_AGENCY_NAME":"Agency","PRINCIPAL_NAICS_CODE":"NAICS"
+    #                             ,"CONGRESSIONAL_DISTRICT":"Congressional District"})
+    # vendors=vendors.rename(vendor_dict)
+    # return vendors
+    return pl.scan_parquet("Data/data.parquet")
+#%%
+# vendors=get_vendors().collect()
+# vendors.write_parquet("Data",row_group_size=1000000,use_pyarrow=True,compression="zstd",compression_level=22)
 
-    vendors=vendors.with_columns(
-        pl.when(pl.col('TYPE_OF_SET_ASIDE').is_in(SBA_socio_asides))
-            .then(pl.col('TYPE_OF_SET_ASIDE'))
-            .when(pl.col('IDV_TYPE_OF_SET_ASIDE').is_in(SBA_set_asides))
-            .then(pl.col('IDV_TYPE_OF_SET_ASIDE'))
-            .otherwise(pl.col('TYPE_OF_SET_ASIDE'))
-            .map_dict(set_aside_dict)
-            .alias("set_aside")
-    ).drop(['IDV_TYPE_OF_SET_ASIDE','TYPE_OF_SET_ASIDE'])
-
-    vendors=vendors.rename(vendor_dict)
-    for x in vendor_dict.values():
+#%%
+def get_counts(vendors,var):
+    for x in newdolcols:
         vendors=vendors.with_columns(
             pl.when(pl.col(x)==True)
             .then(pl.col("VENDOR_ID"))
             .otherwise(pl.lit("@"))
             .alias(x)
         )
-    vendors=vendors.drop("VENDOR_ID")
-
-    vendors=vendors.rename({"VENDOR_ADDRESS_STATE_NAME":"State","state":"state_abbr","FUNDING_DEPARTMENT_NAME":"Department"
-                                ,"FUNDING_AGENCY_NAME":"Agency","PRINCIPAL_NAICS_CODE":"NAICS"
-                                ,"CONGRESSIONAL_DISTRICT":"Congressional District"})
-    return vendors
-#%%
-def get_counts(vendors,var):
     counts=vendors.select(newdolcols+[var]).groupby(var,maintain_order=True).n_unique()
     counts_adj=counts.select([pl.col(var),pl.col(newdolcols).map(lambda x:x-1)]).collect().to_pandas().set_index(var)
     return counts_adj
@@ -163,7 +165,7 @@ def get_choices():
 
     # choices=[NAICS_select,agency_select,county_select,CD_select]
     # return choices
-    return json.load(open ('choices.json', 'r'))
+    return json.load(open ('Data/choices.json', 'r'))
 #%%
 choices=get_choices()
 #json.dump(choices,open('choices.json', 'w'))
@@ -176,7 +178,8 @@ set_aside_select=list(dict.fromkeys(set_aside_dict.values()))
 #%%
 #initial_display
 vendors=get_vendors()
-
+#vendors.collect().write_parquet("vendors.parquet")
+#%%
 # user input
 st.title("SBA Vendor Counts")
 department=st.sidebar.selectbox(label="Department",options=["All"]+department_select,index=0)
@@ -206,43 +209,64 @@ if (len(state)==1):
         if (len(CD)>0) & (CD[0]!= "All"): 
             vendors=vendors.filter(pl.col("Congressional District").is_in(CD))
     except:pass
-vendor_table=get_counts(vendors,"FY")
-#%%    
-st.table(vendor_table)
 
-pal = ["#002e6d", "#cc0000", "#969696", "#007dbc", "#197e4e", "#f1c400"]
-fig=px.line(vendor_table,x=vendor_table.index,y=vendor_table.columns
-            ,    color_discrete_sequence=pal,labels={"index":"FY","value":"vendors","variable":""}
-)
-st.plotly_chart(fig)
-
+map_select=st.sidebar.selectbox(label="Map what type of vendor?",options=newdolcols,index=1)
+year=st.sidebar.slider(label="Map which Fiscal Year?",min_value=min_year, max_value=max_year,value=max_year-1)
+vendor_map=vendors.filter(pl.col("FY")==year)
 
 #%%
 def get_count_map(vendors,col,var):
+    for x in newdolcols:
+        vendors=vendors.with_columns(
+        pl.when(pl.col(x)==True)
+        .then(pl.col("VENDOR_ID"))
+        .otherwise(pl.lit("@"))
+        .alias(x)
+    )
     counts=vendors.select([col]+[var]).groupby(var).n_unique()
     counts_adj=counts.select([pl.col(var),pl.col(col).map(lambda x:x-1)]).collect().to_pandas().set_index(var)
     return counts_adj
+#%%
+if (st.sidebar.button("Submit")): 
+    with st.spinner("Working"):
+        vendor_table=get_counts(vendors,"FY")
+        pal = ["#002e6d", "#cc0000", "#969696", "#007dbc", "#197e4e", "#f1c400"]
+        fig=px.line(vendor_table,x=vendor_table.index,y=vendor_table.columns
+                    ,    color_discrete_sequence=pal,labels={"index":"FY","value":"vendors","variable":""}
+        )
+        # st.write(map_select)
+        # st.write(year)
+        map_table= get_count_map(vendor_map,map_select,"state_abbr").iloc[:,0]
+        fig2 = go.Figure(data=go.Choropleth(
+            locations=map_table.index, # Spatial coordinates
+            z = map_table.array, # Data to be color-coded
+            locationmode = 'USA-states', # set of locations match entries in `locations`
+            colorscale = 'Portland',
+            colorbar_title = "Vendors",
+        ))
 
-#display_usa_map
-map_select=st.selectbox(label="Map what type of vendor?",options=newdolcols,index=1)
-year=st.slider(label="Fiscal Year",min_value=min_year, max_value=max_year,value=max_year-1)
-vendor_map=vendors.filter(pl.col("FY")==year)
-
-map_table= get_count_map(vendor_map,map_select,"state_abbr").iloc[:,0]
-
-import plotly.graph_objects as go
-fig2 = go.Figure(data=go.Choropleth(
-    locations=map_table.index, # Spatial coordinates
-    z = map_table.array, # Data to be color-coded
-    locationmode = 'USA-states', # set of locations match entries in `locations`
-    colorscale = 'Portland',
-    colorbar_title = "Vendors",
-))
-
-fig2.update_layout(
-    geo_scope='usa',
-)
+        fig2.update_layout(
+            geo_scope='usa',
+        )
+else:
+    vendor_table=pd.DataFrame()
+    map_table=pd.DataFrame()
+    fig=px.line()
+    fig2=go.Figure(data=go.Choropleth(
+        locationmode = 'USA-states', # set of locations match entries in `locations`
+        colorscale = 'Portland',
+        colorbar_title = "Vendors",
+    )).update_layout(
+            geo_scope='usa',
+        )
+#%%    
+st.plotly_chart(fig)
+st.table(vendor_table)
+#st.table(map_table)
 st.plotly_chart(fig2)
+
+#%%
+
 #%%
 #or a state map -- THIS DOESN'T WORK
 # if (st.checkbox("Show a county map")):
