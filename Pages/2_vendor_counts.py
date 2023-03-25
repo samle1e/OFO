@@ -211,7 +211,7 @@ if (len(state)==1):
     except:pass
 
 map_select=st.sidebar.selectbox(label="Map what type of vendor?",options=newdolcols,index=1)
-year=st.sidebar.slider(label="Map which Fiscal Year?",min_value=min_year, max_value=max_year,value=max_year-1)
+year=st.sidebar.slider(label="Map which Fiscal Year?",min_value=min_year, max_value=max_year,value=max_year)
 vendor_map=vendors.filter(pl.col("FY")==year)
 
 #%%
