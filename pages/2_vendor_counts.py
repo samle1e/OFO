@@ -71,7 +71,7 @@ department_select=['AGENCY FOR INTERNATIONAL DEVELOPMENT', 'AGRICULTURE, DEPARTM
           ,'SMALL BUSINESS ADMINISTRATION', 'SOCIAL SECURITY ADMINISTRATION', 'STATE, DEPARTMENT OF'
           ,'TRANSPORTATION, DEPARTMENT OF', 'TREASURY, DEPARTMENT OF THE', 'VETERANS AFFAIRS, DEPARTMENT OF']
 state_select=['Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut',
-    'Delaware','District of Columbia','Florida','Georgia','Guam','Hawaii','Idaho','Illinfois','Indiana',
+    'Delaware','District of Columbia','Florida','Georgia','Guam','Hawaii','Idaho','Illinois','Indiana',
     'Iowa','Kansas','Kentucky','Louisiana',
     'Maine','Maryland','Massachusetts','Michigan','Minnesota','Mississippi',
     'Missouri','Montana','Nebraska','Nevada',
