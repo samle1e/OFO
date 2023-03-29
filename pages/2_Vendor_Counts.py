@@ -9,7 +9,6 @@ import pyarrow as pa
 import json
 import plotly.graph_objects as go
 
-<<<<<<< HEAD
 # datalake="C:\\Users\\SQLe\\U.S. Small Business Administration\\Office of Policy Planning and Liaison (OPPL) - Data Lake\\"
 
 # arrowds=ds.dataset(f"{datalake}/SBGR_parquet",format="parquet",partitioning = ds.HivePartitioning(
@@ -685,5 +684,3 @@ st.plotly_chart(fig2)
 #%%
 # with open('choices.json', 'w') as f:
 #     json.dump(choices, f)
-
->>>>>>> c12e3a84697767e9a93d88fe58601e25439381d4
