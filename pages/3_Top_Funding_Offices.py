@@ -319,13 +319,22 @@ def display_data (top_offices,top_vendors,top_products):
         "EIGHT_A_PROCEDURE_DOLLARS":"8(a) Dollars",
     }
 #    st.write()
-    st.radio("Select metric to graph",options=list(dollars_dict.values()),index=1)
+    metric=st.radio("Select metric to graph",options=list(dollars_dict.values()),index=1)
 
+    top_offices=format_df(top_offices).sort_values("Small Business Dollars")
+    fig_offices = px.bar(top_offices.sort_values(metric).head(10)
+        , x=metric, y="FUNDING_OFFICE_NAME", orientation='h')
+    st.dataframe(top_offices,use_container_width=True)
 
+    top_vendors=format_df(top_vendors).sort_values("Small Business Dollars")
+    fig_offices = px.bar(top_vendors.sort_values(metric).head(10)
+        , x=metric, y=top_vendors.columns[0], orientation='h')
+    st.dataframe(top_vendors,use_container_width=True)
 
-    st.dataframe(format_df(top_vendors),use_container_width=True)
-    st.dataframe(format_df(top_offices),use_container_width=True)
-    st.dataframe(format_df(top_products.head(1000)),use_container_width=True)
+    top_offices=format_df(top_products).sort_values("Small Business Dollars")
+    fig_offices = px.bar(top_products.sort_values(metric).head(10)
+        , x=metric, y="PRODUCT_OR_SERVICE_DESCRIPTION", orientation='h')
+    st.dataframe(top_products,use_container_width=True)
 
 #%%
 if __name__ == "__main__":
