@@ -20,37 +20,7 @@ def get_data_desktop(year):
     datalake="C:\\Users\\SQLe\\U.S. Small Business Administration\\Office of Policy Planning and Liaison (OPPL) - Data Lake\\"
     arrowds=ds.dataset(f"{datalake}/SBGR_parquet/FY={year}",format="parquet")
     plds=pl.scan_ds(arrowds)
-
-    cols=[  "VENDOR_ADDRESS_CITY",
-            "ADDRESS_STATE",
-            "VENDOR_ADDRESS_ZIP_CODE",
-            "CONGRESSIONAL_DISTRICT",
-            "PRINCIPAL_NAICS_CODE",
-            "PRODUCT_OR_SERVICE_CODE",
-            "FUNDING_DEPARTMENT_NAME",
-            "FUNDING_AGENCY_NAME",
-            "FUNDING_OFFICE_NAME",
-            "TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
-            "SMALL_BUSINESS_DOLLARS",
-            "WOSB_DOLLARS",
-            "CER_HUBZONE_SB_DOLLARS",
-            "SDB_DOLLARS",
-            "SRDVOB_DOLLARS",
-            "EIGHT_A_PROCEDURE_DOLLARS",
-            "CO_BUS_SIZE_DETERMINATION",
-            ]
-
-    vendor_id={"VENDOR_UEI":"VENDOR_ID"
-                ,"UEI_NAME":"VENDOR_NAME"
-                ,"VENDOR_DUNS_NUMBER":"VENDOR_ID"
-                ,"VENDOR_NAME":"VENDOR_NAME"}
-
-    if year<2022:
-        vendor_cols=list(vendor_id.keys())[2:]
-    else:
-        vendor_cols=list(vendor_id.keys())[:2]
-    data=plds.filter(pl.col("TOTAL_SB_ACT_ELIGIBLE_DOLLARS") != 0).select(cols+vendor_cols)
-    return data
+    return plds
 #%%
 def get_county_mapping_desktop():  
 
@@ -189,7 +159,7 @@ def user_input():
     inv_state_abbr={v: k for k, v in state_abbr.items()}
 
     year=st.sidebar.slider(label="Fiscal Year",min_value=year_select[0]
-                        ,max_value=year_select[1])
+                        ,max_value=year_select[1]-1,value=year_select[1]-1)
     state=st.sidebar.multiselect(label="States (pick multi)",options=state_select)
 
     county_choice=[]
@@ -251,30 +221,127 @@ def filter_data (year, state, counties, CDs, NAICS, PSC):
             CD_match=[x[3:5] for x in CDs if x[0:3]==x]
             add_list=ZIP_to_county.loc[(ZIP_to_county["State"]==x) & 
                         (ZIP_to_county["CD"].str.endswith(CD_match)), "zip"].to_list()
-            zip_cd_list.append(add_list)
+            zip_cd_list.extend(add_list)
         filter_data=data.filter(pl.col("VENDOR_ADDRESS_ZIP_CODE").is_in(zip_cd_list))
     if NAICS:
         filter_data=data.filter(pl.col("PRINCIPAL_NAICS_CODE").is_in(NAICS))
     if PSC:
         filter_data=data.filter(pl.col("PRODUCT_OR_SERVICE_CODE").is_in(PSC))
+    if ~any([state, counties, CDs, NAICS, PSC]):
+        filter_data=data
     return filter_data
 
 #%%
 def top_offices(filtered_data):
+    officecols=[  "FUNDING_DEPARTMENT_NAME",
+            "FUNDING_AGENCY_NAME",
+            "FUNDING_OFFICE_NAME",
+        ]
+    dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
+            "SMALL_BUSINESS_DOLLARS",
+            "WOSB_DOLLARS",
+            "CER_HUBZONE_SB_DOLLARS",
+            "SDB_DOLLARS",
+            "SRDVOB_DOLLARS",
+            "EIGHT_A_PROCEDURE_DOLLARS"]
 
+    top_offices=filtered_data.select(officecols+dolcols).groupby(
+        officecols).sum().sort("SMALL_BUSINESS_DOLLARS",descending=True).collect().to_pandas()
+    return top_offices
 
 #%%
 def top_vendors(filtered_data):
+    vendor_id={"VENDOR_UEI":"VENDOR_ID"
+                ,"UEI_NAME":"VENDOR_NAME"
+                ,"VENDOR_DUNS_NUMBER":"VENDOR_ID"
+                ,"VENDOR_NAME":"VENDOR_NAME"}
+    dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
+            "SMALL_BUSINESS_DOLLARS",
+            "WOSB_DOLLARS",
+            "CER_HUBZONE_SB_DOLLARS",
+            "SDB_DOLLARS",
+            "SRDVOB_DOLLARS",
+            "EIGHT_A_PROCEDURE_DOLLARS"]
 
+    if year<2022:
+        vendor_cols=list(vendor_id.keys())[2:]
+    else:
+        vendor_cols=list(vendor_id.keys())[:2]
+    top_vendors=filtered_data.select(vendor_cols+dolcols).groupby(
+        vendor_cols).sum().sort("SMALL_BUSINESS_DOLLARS",descending=True).collect().to_pandas()
+    return top_vendors
+#%%
+def top_products(filtered_data):
+    productcols=['PRODUCT_OR_SERVICE_CODE',
+                 'PRODUCT_OR_SERVICE_DESCRIPTION'
+        ]
+    dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
+            "SMALL_BUSINESS_DOLLARS",
+            "SDB_DOLLARS",
+            "WOSB_DOLLARS",
+            "SRDVOB_DOLLARS",
+            "CER_HUBZONE_SB_DOLLARS",
+            "EIGHT_A_PROCEDURE_DOLLARS"]
+
+    top_products=filtered_data.select(productcols+dolcols).groupby(
+        productcols).sum().sort("SMALL_BUSINESS_DOLLARS",descending=True).collect().to_pandas()
+    return top_products
+#%%
+def format_df (df):
+    dollars_dict={
+        "TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"Total Dollars",
+        "SMALL_BUSINESS_DOLLARS":"Small Business Dollars",
+        "SDB_DOLLARS":"SDB Dollars",
+        "WOSB_DOLLARS":"WOSB Dollars",
+        "CER_HUBZONE_SB_DOLLARS":"HUBZone Dollars",
+        "SRDVOB_DOLLARS":"SDVOSB Dollars",
+        "EIGHT_A_PROCEDURE_DOLLARS":"8(a) Dollars",
+    }
+    df=df.rename(columns=dollars_dict) #rename columns
+
+    indexlist=[]
+    for x in list(dollars_dict.values()):
+        newindex=df[df[x]>0].sort_values(x,ascending=False).head(500).index
+        indexlist.extend(newindex)
+    indexlist=list(set(indexlist))
+    df=df.iloc[indexlist].set_index(df.columns[0])
+    return df
+#    indexes=
+#%%
+def display_data (top_offices,top_vendors,top_products):
+    dollars_dict={
+        "TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"Total Dollars",
+        "SMALL_BUSINESS_DOLLARS":"Small Business Dollars",
+        "SDB_DOLLARS":"SDB Dollars",
+        "WOSB_DOLLARS":"WOSB Dollars",
+        "CER_HUBZONE_SB_DOLLARS":"HUBZone Dollars",
+        "SRDVOB_DOLLARS":"SDVOSB Dollars",
+        "EIGHT_A_PROCEDURE_DOLLARS":"8(a) Dollars",
+    }
+#    st.write()
+    st.radio("Select metric to graph",options=list(dollars_dict.values()),index=1)
+
+
+
+    st.dataframe(format_df(top_vendors),use_container_width=True)
+    st.dataframe(format_df(top_offices),use_container_width=True)
+    st.dataframe(format_df(top_products.head(1000)),use_container_width=True)
 
 #%%
 if __name__ == "__main__":
+    st.set_page_config(
+        page_title="Top Offices and Vendors",
+        page_icon="https://www.sba.gov/brand/assets/sba/img/pages/logo/logo.svg",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
     st.title("Top Offices and Vendors")
     year, state, counties, CDs, NAICS, PSC= user_input()
     filtered_data=filter_data(year, state, counties, CDs, NAICS, PSC)
     top_offices = top_offices(filtered_data)
     top_vendors = top_vendors(filtered_data)
-
+    top_products = top_products(filtered_data)
+    display_data (top_offices,top_vendors,top_products)
 #%%
 
 
