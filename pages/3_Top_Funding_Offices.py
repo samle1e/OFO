@@ -205,15 +205,16 @@ def user_input():
 def filter_data (year, state, counties, CDs, NAICS, PSC):
     year_select, state_select, state_abbr, county_select, CD_select, NAICS_select, PSC_select, department_select = get_choices()
 
-    data=get_data_desktop(year)
+    filter_data=get_data_desktop(year)
     if state:
         state_list=[abbr for abbr,name in state_abbr.items() if name in state]
-        filter_data=data.filter(pl.col("ADDRESS_STATE").is_in(state_list))
+        st.write(state_list)
+        filter_data=filter_data.filter(pl.col("ADDRESS_STATE").is_in(state_list))
     if counties:
         county_list=[", ".join([x.split(", ")[1],x.split(", ")[0]]) for x in counties]
         zip_county_list=ZIP_to_county.loc[(ZIP_to_county["Name"].isin(county_list)) & 
                                         (ZIP_to_county["bus_ratio"]>0.3), "zip"].to_list()
-        filter_data=data.filter(pl.col("VENDOR_ADDRESS_ZIP_CODE").is_in(zip_county_list))
+        filter_data=filter_data.filter(pl.col("VENDOR_ADDRESS_ZIP_CODE").is_in(zip_county_list))
     if CDs:
         zip_cd_list=[]
         for x in state:
@@ -222,13 +223,12 @@ def filter_data (year, state, counties, CDs, NAICS, PSC):
             add_list=ZIP_to_county.loc[(ZIP_to_county["State"]==x) & 
                         (ZIP_to_county["CD"].str.endswith(CD_match)), "zip"].to_list()
             zip_cd_list.extend(add_list)
-        filter_data=data.filter(pl.col("VENDOR_ADDRESS_ZIP_CODE").is_in(zip_cd_list))
+        filter_data=filter_data.filter(pl.col("VENDOR_ADDRESS_ZIP_CODE").is_in(zip_cd_list))
     if NAICS:
-        filter_data=data.filter(pl.col("PRINCIPAL_NAICS_CODE").is_in(NAICS))
+        filter_data=filter_data.filter(pl.col("PRINCIPAL_NAICS_CODE").is_in(NAICS))
     if PSC:
-        filter_data=data.filter(pl.col("PRODUCT_OR_SERVICE_CODE").is_in(PSC))
-    if ~any([state, counties, CDs, NAICS, PSC]):
-        filter_data=data
+        filter_data=filter_data.filter(pl.col("PRODUCT_OR_SERVICE_CODE").is_in(PSC))
+
     return filter_data
 
 #%%
@@ -239,14 +239,14 @@ def top_offices(filtered_data):
         ]
     dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
             "SMALL_BUSINESS_DOLLARS",
+            "SDB_DOLLARS",
             "WOSB_DOLLARS",
             "CER_HUBZONE_SB_DOLLARS",
-            "SDB_DOLLARS",
             "SRDVOB_DOLLARS",
             "EIGHT_A_PROCEDURE_DOLLARS"]
 
     top_offices=filtered_data.select(officecols+dolcols).groupby(
-        officecols).sum().sort("SMALL_BUSINESS_DOLLARS",descending=True).collect().to_pandas()
+        officecols).sum().sort("TOTAL_SB_ACT_ELIGIBLE_DOLLARS",descending=True).collect().to_pandas()
     return top_offices
 
 #%%
@@ -257,9 +257,9 @@ def top_vendors(filtered_data):
                 ,"VENDOR_NAME":"VENDOR_NAME"}
     dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
             "SMALL_BUSINESS_DOLLARS",
+            "SDB_DOLLARS",
             "WOSB_DOLLARS",
             "CER_HUBZONE_SB_DOLLARS",
-            "SDB_DOLLARS",
             "SRDVOB_DOLLARS",
             "EIGHT_A_PROCEDURE_DOLLARS"]
 
@@ -268,7 +268,7 @@ def top_vendors(filtered_data):
     else:
         vendor_cols=list(vendor_id.keys())[:2]
     top_vendors=filtered_data.select(vendor_cols+dolcols).groupby(
-        vendor_cols).sum().sort("SMALL_BUSINESS_DOLLARS",descending=True).collect().to_pandas()
+        vendor_cols).sum().sort("TOTAL_SB_ACT_ELIGIBLE_DOLLARS",descending=True).collect().to_pandas()
     return top_vendors
 #%%
 def top_products(filtered_data):
@@ -279,12 +279,12 @@ def top_products(filtered_data):
             "SMALL_BUSINESS_DOLLARS",
             "SDB_DOLLARS",
             "WOSB_DOLLARS",
-            "SRDVOB_DOLLARS",
             "CER_HUBZONE_SB_DOLLARS",
+            "SRDVOB_DOLLARS",
             "EIGHT_A_PROCEDURE_DOLLARS"]
 
     top_products=filtered_data.select(productcols+dolcols).groupby(
-        productcols).sum().sort("SMALL_BUSINESS_DOLLARS",descending=True).collect().to_pandas()
+        productcols).sum().sort("TOTAL_SB_ACT_ELIGIBLE_DOLLARS",descending=True).collect().to_pandas()
     return top_products
 #%%
 def format_df (df):
@@ -297,14 +297,18 @@ def format_df (df):
         "SRDVOB_DOLLARS":"SDVOSB Dollars",
         "EIGHT_A_PROCEDURE_DOLLARS":"8(a) Dollars",
     }
+    dolcols=list(dollars_dict.values())
     df=df.rename(columns=dollars_dict) #rename columns
 
-    indexlist=[]
-    for x in list(dollars_dict.values()):
-        newindex=df[df[x]>0].sort_values(x,ascending=False).head(500).index
-        indexlist.extend(newindex)
-    indexlist=list(set(indexlist))
-    df=df.iloc[indexlist].set_index(df.columns[0])
+    maxindex=0
+    for x in dolcols:
+        max=df[df[x]>0].sort_values(x,ascending=False).head(100).last_valid_index()
+        if max>maxindex:
+            maxindex=max
+    df=df.iloc[:maxindex]
+    df[dolcols]=df[dolcols].round(0)
+    df.index = df.index + 1
+
     return df
 #    indexes=
 #%%
@@ -321,19 +325,22 @@ def display_data (top_offices,top_vendors,top_products):
 #    st.write()
     metric=st.radio("Select metric to graph",options=list(dollars_dict.values()),index=1)
 
-    top_offices=format_df(top_offices).sort_values("Small Business Dollars")
-    fig_offices = px.bar(top_offices.sort_values(metric).head(10)
-        , x=metric, y="FUNDING_OFFICE_NAME", orientation='h')
+    top_offices=format_df(top_offices).sort_values("Small Business Dollars", ascending=False)
+    fig_offices = px.bar(top_offices.sort_values(metric, ascending=False).head(10).sort_values(metric)
+        , x=metric, y="FUNDING_OFFICE_NAME", orientation='h',labels={"FUNDING_OFFICE_NAME":"Funding Office Name"})
+    st.plotly_chart(fig_offices)
     st.dataframe(top_offices,use_container_width=True)
 
-    top_vendors=format_df(top_vendors).sort_values("Small Business Dollars")
-    fig_offices = px.bar(top_vendors.sort_values(metric).head(10)
-        , x=metric, y=top_vendors.columns[0], orientation='h')
+    top_vendors=format_df(top_vendors).sort_values("Small Business Dollars", ascending=False)
+    fig_vendors = px.bar(top_vendors.sort_values(metric, ascending=False).head(10).sort_values(metric)
+        , x=metric, y=top_vendors.columns[1], orientation='h',labels={top_vendors.columns[0]:"Vendor Name"})
+    st.plotly_chart(fig_vendors)
     st.dataframe(top_vendors,use_container_width=True)
 
-    top_offices=format_df(top_products).sort_values("Small Business Dollars")
-    fig_offices = px.bar(top_products.sort_values(metric).head(10)
-        , x=metric, y="PRODUCT_OR_SERVICE_DESCRIPTION", orientation='h')
+    top_products=format_df(top_products).sort_values("Small Business Dollars", ascending=False)
+    fig_products = px.bar(top_products.sort_values(metric, ascending=False).head(10).sort_values(metric)
+        , x=metric, y="PRODUCT_OR_SERVICE_DESCRIPTION", orientation='h',labels={"PRODUCT_OR_SERVICE_DESCRIPTION":"Product/Service"})
+    st.plotly_chart(fig_products)
     st.dataframe(top_products,use_container_width=True)
 
 #%%
