@@ -67,8 +67,9 @@ def get_county_mapping_desktop():
 #%%
 def get_county_mapping():
     return pd.read_parquet("ZIP_to_FIPS_Name_20230327.parquet")
+    
 ZIP_to_county=get_county_mapping()
-#%%
+
 #%%
 def NAICS_PSC_names():
 #get three sets of NAICS names
@@ -237,7 +238,7 @@ def top_offices(filtered_data):
             "FUNDING_AGENCY_NAME",
             "FUNDING_OFFICE_NAME",
         ]
-    dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
+    global dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
             "SMALL_BUSINESS_DOLLARS",
             "SDB_DOLLARS",
             "WOSB_DOLLARS",
@@ -255,13 +256,6 @@ def top_vendors(filtered_data):
                 ,"UEI_NAME":"VENDOR_NAME"
                 ,"VENDOR_DUNS_NUMBER":"VENDOR_ID"
                 ,"VENDOR_NAME":"VENDOR_NAME"}
-    dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
-            "SMALL_BUSINESS_DOLLARS",
-            "SDB_DOLLARS",
-            "WOSB_DOLLARS",
-            "CER_HUBZONE_SB_DOLLARS",
-            "SRDVOB_DOLLARS",
-            "EIGHT_A_PROCEDURE_DOLLARS"]
 
     if year<2022:
         vendor_cols=list(vendor_id.keys())[2:]
@@ -275,20 +269,13 @@ def top_products(filtered_data):
     productcols=['PRODUCT_OR_SERVICE_CODE',
                  'PRODUCT_OR_SERVICE_DESCRIPTION'
         ]
-    dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
-            "SMALL_BUSINESS_DOLLARS",
-            "SDB_DOLLARS",
-            "WOSB_DOLLARS",
-            "CER_HUBZONE_SB_DOLLARS",
-            "SRDVOB_DOLLARS",
-            "EIGHT_A_PROCEDURE_DOLLARS"]
 
     top_products=filtered_data.select(productcols+dolcols).groupby(
         productcols).sum().sort("TOTAL_SB_ACT_ELIGIBLE_DOLLARS",descending=True).collect().to_pandas()
     return top_products
 #%%
 def format_df (df):
-    dollars_dict={
+    global dollars_dict={
         "TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"Total Dollars",
         "SMALL_BUSINESS_DOLLARS":"Small Business Dollars",
         "SDB_DOLLARS":"SDB Dollars",
@@ -313,15 +300,6 @@ def format_df (df):
 #    indexes=
 #%%
 def display_data (top_offices,top_vendors,top_products):
-    dollars_dict={
-        "TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"Total Dollars",
-        "SMALL_BUSINESS_DOLLARS":"Small Business Dollars",
-        "SDB_DOLLARS":"SDB Dollars",
-        "WOSB_DOLLARS":"WOSB Dollars",
-        "CER_HUBZONE_SB_DOLLARS":"HUBZone Dollars",
-        "SRDVOB_DOLLARS":"SDVOSB Dollars",
-        "EIGHT_A_PROCEDURE_DOLLARS":"8(a) Dollars",
-    }
 #    st.write()
     metric=st.radio("Select metric to graph",options=list(dollars_dict.values()),index=1)
 
@@ -342,6 +320,17 @@ def display_data (top_offices,top_vendors,top_products):
         , x=metric, y="PRODUCT_OR_SERVICE_DESCRIPTION", orientation='h',labels={"PRODUCT_OR_SERVICE_DESCRIPTION":"Product/Service"})
     st.plotly_chart(fig_products)
     st.dataframe(top_products,use_container_width=True)
+
+def show_county_graph(filtered_data,metric)
+    rev_dollars_dict= {v: k for k, v in dollars_dict.items()}
+    metricd=rev_dollars_dict[metric]
+
+    zip_totals=filter_data.select(pl.col(["VENDOR_ADDRESS_ZIP_CODE"]+metricd)).groupby("VENDOR_ADDRESS_ZIP_CODE"
+        ).sum().collect().to_pandas()
+    ZIP_to_county_f=ZIP_to_county[ZIP_to_county["zip"].is_in(zip_totals.index)].drop_duplicates("zip",keep="first"
+    )
+
+
 
 #%%
 if __name__ == "__main__":
