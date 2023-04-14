@@ -1,0 +1,78 @@
+Business Type Name,Business Type Code
+U.S Federal Government,2R
+U.S. State Government,2F
+U.S. Local Government,12
+Tribal Government,3I
+Foreign Government,CY
+AbilityOne Non Profit Agency,A7
+Foreign Owned,20
+Small Agricultural Cooperative,1D
+Limited Liability Company,LJ
+Subchapter S Corporation,XS
+Manufacturer of Goods,MF
+For Profit Organization,2X
+Non-Profit Organization,A8
+Other Not For Profit Organization,2U
+Community Development Corporation Owned Firm,HK
+Labor Surplus Area Firm,A3
+Veteran Owned Business,A5
+Service Disabled Veteran Owned Business,QF
+Woman Owned Business,A2
+Minority Owned Business,23
+Asian-Pacific American Owned,FR
+Subcontinent Asian (Asian-Indian) American Owned,QZ
+Black American Owned,OY
+Hispanic American Owned,PI
+Native American Owned,NB
+Woman Owned Small Business,8W
+Self Certified Small Disadvantaged Business,27
+Economically Disadvantaged Women Small Owned Business,8E
+Joint Venture Women Owned Small Business,8C
+Joint Venture Economically Disadvantaged Women Small Owned Business,8D
+Federal Agency,NG
+Federally Funded Research and Development Center,QW
+City,C8
+County,C7
+Inter-municipal,ZR
+Local Government Owned,MG
+Municipality,C6
+School District,H6
+Transit Authority,TW
+Council of Governments,UD
+Housing Authorities Public/Tribal,8B
+Interstate Entity,86
+Planning Commission,KM
+Port Authority,T4
+Community Development Corporation ,H2
+Domestic Shelter,6D
+Educational Institution,M8
+1862 Land Grant College,G6
+1890 Land Grant College,G7
+1994 Land Grant College,G8
+Historically Black College or University,HB
+Minority Institution,1A
+Private University or College,1R
+School of Forestry,ZW
+Hispanic Servicing Institution,GW
+State Controlled Institution of Higher Learning,OH
+Tribal College,HS
+Veterinary College,QU
+Alaskan Native Servicing Institution,G3
+Native Hawaiian Servicing Institution,G5
+Foundation,BZ
+Hospital,80
+Veterinary Hospital,FY
+DOT Certified DBE,HQ
+Alaskan Native Corporation Owned Firm,05
+American Indian Owned,OW
+Indian Tribe (Federally Recognized),XY
+Native Hawaiian Organization Owned Firm,8U
+Tribally Owned Firm,1B
+Township,FO
+Airport Authority,TR
+Other Than One of the Proceeding,G9
+Self-Certified HUBZone Joint Venture,JX
+Indian Economic Enterprise,1E
+Indian Small Business Economic Enterprise,1S
+Grants,V2 **
+Contracts and Grants,VW **
