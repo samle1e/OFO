@@ -138,10 +138,12 @@ def get_HUD (url, element):
 def get_state_names():
     state_names=pd.read_csv("https://raw.githubusercontent.com/jasonong/List-of-US-States/master/states.csv")
     state_names=state_names.set_index("Abbreviation").squeeze().to_dict()
-    terr_dict={"PR":"Puerto Rico","GU":"Guam"
-                                    ,"AS":"American Samoa"	
-                                    ,"MP":"Northern Mariana Is."
-                                    ,"VI":"Virgin Islands"}
+    terr_dict={"PR":"Puerto Rico",
+                                    #"GU":"Guam"
+                                    #,"AS":"American Samoa"	
+                                    #,"MP":"Northern Mariana Is."
+                                    #,"VI":"Virgin Islands"
+                                    }
     state_names.update(terr_dict)
     return state_names
 
