@@ -381,7 +381,7 @@ def show_quick_stats (SBdolstats, set_aside_SBA, dist_SAM):
                         ).to_frame("Business Type Dollars Obligated")
     three_yr_setaside = set_aside_SBA.iloc[-3:].mean().round(2).to_frame("Set Aside Dollars Obligated")
     
-    counts = dist_SAM.count().iloc[[0]].append(dist_SAM.iloc[:,-10:].sum()).rename(
+    counts = pd.concat([dist_SAM.count().iloc[[0]], dist_SAM.iloc[:,-10:].sum()]).rename(
         {"UNIQUE_ENTITY_ID":"Registered Small Businesses"})
     counts.name = "Counts"
     col1, col2 = st.columns ([1,1])
