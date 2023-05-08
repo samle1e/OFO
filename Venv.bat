@@ -1,0 +1,1 @@
+C:\spvenv\Scripts\activate.bat

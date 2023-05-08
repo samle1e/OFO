@@ -1,3 +1,5 @@
 
 pages/choices.json
 st_local_desktop.py
+.streamlit/secrets.toml
+.streamlit/secrets.toml.txt
