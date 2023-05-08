@@ -227,40 +227,33 @@ def get_count_map(vendors,col,var):
     counts_adj=counts.select([pl.col(var),pl.col(col).map(lambda x:x-1)]).collect().to_pandas().set_index(var)
     return counts_adj
 #%%
-if (st.sidebar.button("Submit")): 
-    with st.spinner("Working"):
-        vendor_table=get_counts(vendors,"FY")
-        pal = ["#002e6d", "#cc0000", "#969696", "#007dbc", "#197e4e", "#f1c400"]
-        fig=px.line(vendor_table,x=vendor_table.index,y=vendor_table.columns
-                    ,    color_discrete_sequence=pal,labels={"index":"FY","value":"vendors","variable":""}
-        )
-        # st.write(map_select)
-        # st.write(year)
-        map_table= get_count_map(vendor_map,map_select,"state_abbr").iloc[:,0]
-        fig2 = go.Figure(data=go.Choropleth(
-            locations=map_table.index, # Spatial coordinates
-            z = map_table.array, # Data to be color-coded
-            locationmode = 'USA-states', # set of locations match entries in `locations`
-            colorscale = 'Portland',
-            colorbar_title = "Vendors",
-        ))
+#prepare table and plots
 
-        fig2.update_layout(
-            geo_scope='usa',
-        )
-else:
-    vendor_table=pd.DataFrame()
-    map_table=pd.DataFrame()
-    fig=px.line()
-    fig2=go.Figure(data=go.Choropleth(
-        locationmode = 'USA-states', # set of locations match entries in `locations`
-        colorscale = 'Portland',
-        colorbar_title = "Vendors",
-    )).update_layout(
-            geo_scope='usa',
-        )
+vendor_table=get_counts(vendors,"FY")
+pal = ["#002e6d", "#cc0000", "#969696", "#007dbc", "#197e4e", "#f1c400"]
+fig=px.line(vendor_table,x=vendor_table.index,y=vendor_table.columns
+            ,    color_discrete_sequence=pal,labels={"index":"FY","value":"vendors","variable":""}
+)
+# st.write(map_select)
+# st.write(year)
+map_table= get_count_map(vendor_map,map_select,"state_abbr").iloc[:,0]
+
+fig2 = go.Figure(data=go.Choropleth(
+    locations=map_table.index, # Spatial coordinates
+    z = map_table.array, # Data to be color-coded
+    locationmode = 'USA-states', # set of locations match entries in `locations`
+    colorscale = 'Portland',
+    colorbar_title = "Vendors",
+))
+
+fig2.update_layout(
+    geo_scope='usa',
+)
 #%%    
-st.plotly_chart(fig)
+if fig:
+    st.plotly_chart(fig)
+
 st.table(vendor_table)
-#st.table(map_table)
-st.plotly_chart(fig2)
+
+if fig2:
+    st.plotly_chart(fig2)

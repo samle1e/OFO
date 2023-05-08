@@ -439,7 +439,7 @@ def show_tables_and_downloads (SBdolstats, set_aside_SBA, dist_SAM, pick_dict):
     state = pick_dict['member.state']
     district = pick_dict['district_text']
 
-    All_stats = SBdolstats.join(set_aside_SBA)
+    All_stats = SBdolstats.drop(['Total Eligible Dollars'],axis=1).join(set_aside_SBA)
     All_stats.index.rename ("FY",inplace=True)
 
     st.subheader ("SBA Dollars by Fiscal Year")
