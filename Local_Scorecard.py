@@ -104,7 +104,7 @@ dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS","SMALL_BUSINESS_DOLLARS","SDB_DOLLARS",
 
 #%%
 
-#@st.cache_data
+@st.cache_data
 def get_dollars():
     from snowflake.snowpark.functions import substring, col
     connection_parameters = st.secrets.snowflake_credentials
