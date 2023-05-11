@@ -13,14 +13,14 @@ st.set_page_config(
 
 #%%
 #bring in the match table
-SBA_match=pd.read_csv("SBA_DO_ZIP_matching_table.csv",  converters={ #./Mapping Files
-	'ZIP.Code': str},usecols=[
-	"ZIP.Code","SBA.District.Office","State.Name"]).drop_duplicates("ZIP.Code")
-SBA_match['VENDOR_ADDRESS_STATE_NAME']=SBA_match["State.Name"].str.upper()
-ZIP_list=SBA_match['ZIP.Code']
-
-
-
+@st.cache_data
+def get_DOZIP ():
+    session = sp.Session.builder.configs(st.secrets.snowflake_credentials).create()
+    data = session.table('SBA_DO_ZIP')
+    SBA_match = data.select(['ZIP_CODE','SBA_DISTRICT_OFFICE','STATE_NAME']).to_pandas().drop_duplicates("ZIP_CODE")
+    SBA_match.columns = ['ZIP.Code', 'SBA.District.Office', 'State.Name']
+    SBA_match['VENDOR_ADDRESS_STATE_NAME']=SBA_match["State.Name"].str.upper()
+    return SBA_match
 #%%
 # dicts for regions and DOs
 Region_dict={'Connecticut':1,'Maine':1
@@ -106,7 +106,7 @@ dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS","SMALL_BUSINESS_DOLLARS","SDB_DOLLARS",
 
 @st.cache_data
 def get_dollars():
-    from snowflake.snowpark.functions import substring, col
+    from snowflake.snowpark.functions import substring
     connection_parameters = st.secrets.snowflake_credentials
     global session
     session = sp.Session.builder.configs(connection_parameters).create()
@@ -126,6 +126,7 @@ def get_dollars():
 dollars=get_dollars()
 
 #%%
+SBA_match = get_DOZIP ()
 dollarsDO=dollars.merge(SBA_match,how="left",left_on=["ZIP5","VENDOR_ADDRESS_STATE_NAME"],right_on=['ZIP.Code',"VENDOR_ADDRESS_STATE_NAME"])
 #%%
 #group by district office
@@ -147,16 +148,12 @@ state=st.sidebar.selectbox(label="State",options=select_options("State"),index=1
 region=st.sidebar.selectbox(label="Region",options=select_options("SBA.Region"),index=0)
 DO=st.sidebar.selectbox(label="SBA District",options=select_options("SBA.District.Office"),index=0)
 
-#all dollars is initial display
 if DO != "No Selection":
 	var="SBA.District.Office";select=DO
 elif region != "No Selection":
 	var="SBA.Region";select=region
 else:
 	var="State";select=state
-
-#for dashboard, save to parquet
-#dollars.to_parquet("dollars.parquet") #COMMENT OUT
 
 #%%
 select_dollars=dollarsDO[dollarsDO[var]==select].groupby('FISCAL_YEAR')[dolcols].sum()
