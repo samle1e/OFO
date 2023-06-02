@@ -3,6 +3,12 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import snowflake.snowpark as sp
+from utils import generator
+
+if st.secrets:
+    pass
+else:
+    generator.create_secrets()
 
 st.set_page_config(
     page_title="SBA Local Scorecard Dashboard",
@@ -10,6 +16,14 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True) 
 
 #%%
 #bring in the match table
@@ -118,8 +132,8 @@ def get_dollars():
     data_ZIP = data.filter(~data['VENDOR_ADDRESS_STATE_NAME'].isin(single_DO_df)
                            ).with_column("ZIP5", substring(data["VENDOR_ADDRESS_ZIP_CODE"],1,5)
                                          ).group_by(["FISCAL_YEAR",'VENDOR_ADDRESS_STATE_NAME','ZIP5']).sum(*dolcols).to_pandas()
-    df = pd.concat([data_state, data_ZIP])                                    
-    df.columns = df.columns.str.replace("SUM(","").str.replace(")","")
+    df = pd.concat([data_state, data_ZIP])    
+    df.columns = df.columns.str.replace("SUM(","", regex=False).str.replace(")","", regex=False)
     return df
 
 #%%
@@ -138,22 +152,42 @@ dollarsDO.rename(columns={"VENDOR_ADDRESS_STATE_NAME":"State"},inplace=True)
 #%%
 
 #get user input on the state/DO/Region
+keys = ["a","b","c"]
 def select_options(var):
-	select= pd.concat([pd.Series(["No Selection"]),dollarsDO[var].dropna().drop_duplicates().sort_values()])
-	return select
+    select = dollarsDO[var].dropna().drop_duplicates().sort_values().to_list()
+    return select
 
-st.title("Local Small Business Achievements by FY")
+state_hide = st.sidebar.empty()
+state=state_hide.selectbox(label="State",options=["No Selection"] + select_options("State"),index=1, key = keys[0])
 
-state=st.sidebar.selectbox(label="State",options=select_options("State"),index=1)
-region=st.sidebar.selectbox(label="Region",options=select_options("SBA.Region"),index=0)
-DO=st.sidebar.selectbox(label="SBA District",options=select_options("SBA.District.Office"),index=0)
+region_hide = st.sidebar.empty()
+region=region_hide.selectbox(label="SBA Region",options=["No Selection"] + ["SBA Region " + str(reg) for reg in select_options("SBA.Region")],index=0, key = keys[1])
+
+DO_hide = st.sidebar.empty()
+DO=DO_hide.selectbox(label="SBA District",options=["No Selection"] + select_options("SBA.District.Office"),index=0, key = keys[2])
 
 if DO != "No Selection":
-	var="SBA.District.Office";select=DO
+    var="SBA.District.Office"
+    select=DO
+    state_hide.empty()
+    region_hide.empty()
 elif region != "No Selection":
-	var="SBA.Region";select=region
+    var="SBA.Region"
+    select=int(region.replace("SBA Region ",""))
+    state_hide.empty()
+    DO_hide.empty()
 else:
-	var="State";select=state
+    var="State"
+    select=state
+
+st.title("Local Small Business Achievements by Fiscal Year")
+
+def reset():
+    for key in keys:
+        st.session_state[key] = 'No Selection'
+    st.session_state["a"] = select_options("State")[0]
+
+st.sidebar.button('Reset', on_click=reset)
 
 #%%
 select_dollars=dollarsDO[dollarsDO[var]==select].groupby('FISCAL_YEAR')[dolcols].sum()
@@ -166,7 +200,7 @@ select_pct.columns=select_pct.columns.str.replace("$","%",regex=False)
 #%%
 #show the graph
 SP_long=select_pct.melt(ignore_index=False).rename(columns={"variable":"Category","value":"Pct"})
-SP_long.index=SP_long.index.astype(str).rename("FY")
+SP_long.index=SP_long.index.astype(str).rename("Fiscal Year")
 #%%
 pal = ["#002e6d", "#cc0000", "#969696", "#007dbc", "#197e4e", "#f1c400"]
 
@@ -188,7 +222,6 @@ st.table(select_dollars.style.format('${:,.0f}')
 st.table(select_pct.style.format('{:.2f}%')
 )
 
-st.caption("Source: SBA Small Business Goaling Reports. This data does not apply double-credit adjustments and will not match up with the SBA small-business scorecard.")
 
 #allow download of the table
 if DO != "No Selection":
@@ -202,5 +235,9 @@ st.download_button(label="Download Data"
            ,data=select_dollars.join(select_pct).to_csv()
 		   ,file_name=filename
 	   )
+
+st.caption("""Source: SBA Small Business Goaling Reports, FY10-FY22. Location is based on vendor business address. This data does not apply double-credit adjustments and will not match up with the SBA small-business scorecard.\n
+Abbreviations: SDB - Small Disadvantaged Business, WOSB - Women-owned small business, HUBZone - Historically Underutilized Business Zone, SDVOSB - Service-disabled veteran-owned small business.\n
+Total dollars are total scorecard-eligible dollars after applying the exclusions on the [SAM.gov Small Business Goaling Report Appendix](https://sam.gov/reports/awards/standard/F65016DF4F1677AE852B4DACC7465025/view) (login required).""")
 
 # %%
