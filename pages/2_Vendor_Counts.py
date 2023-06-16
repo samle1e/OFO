@@ -27,6 +27,7 @@ hide_streamlit_style = """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True) 
 
 #%%
+@st.cache_resource
 def get_data (query):
     con = connect(**st.secrets.snowflake_credentials)
     cursor = con.cursor()
@@ -158,15 +159,6 @@ def get_PSC_names():
 
 
 #%%
-#extract vendor data
-vendor_dict={"TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"All Vendors"
-            ,"SMALL_BUSINESS_DOLLARS":"Small Business Vendors"
-            ,"SDB_DOLLARS":"SDB Vendors"
-            ,"WOSB_DOLLARS":"WOSB Vendors"
-            ,"CER_HUBZONE_SB_DOLLARS":"HUBZone Vendors"
-            ,"SRDVOB_DOLLARS":"SDVOSB Vendors"
-    }
-
 def reset_session_state ():
     for x in st.session_state:
         del st.session_state[x]
@@ -319,6 +311,19 @@ def get_set_aside ():
     set_aside_pick = [set_aside_dict[pick] for pick in set_aside_pick]
     return {'SET_ASIDE': set_aside_pick}
 
+def format_table (df):
+    df.index = df.index.map(str)
+    df.columns = (df.columns
+        .str.replace("_DOLLARS","_VENDORS")
+        .str.replace("B_FLAG|_OWNED_BUSINESS|_OWNED$","_SB_VENDORS", regex=True)
+        .str.replace("PROCEDURE_","")
+        .str.replace('ALASKAN_NATIVE_CORPORATION','ALASKAN_NATIVE_CORPORATION_SB_VENDORS')
+        .str.replace('NATIVE_HAWAIIAN_ORGANIZATION','NATIVE_HAWAIIAN_ORGANIZATION_SB_VENDORS')
+        .str.replace('TRIBAL','TRIBAL_SB_VENDORS')
+        )
+    df = df.set_axis(df.columns.str.replace('_',' '), axis=1)
+    return df
+
 def counts_table (all_ct=True, **kwargs): 
     #kwargs is a series of keyword:list pairs that can be used to filter the table
     tb = get_vendor_data()
@@ -357,15 +362,7 @@ def counts_table (all_ct=True, **kwargs):
         counts =  all_counts.join(sb_counts)
     else:
         counts = sb_counts
-    counts.index = counts.index.map(str)
-    counts.columns = (counts.columns
-        .str.replace("_DOLLARS","_VENDORS")
-        .str.replace("B_FLAG|_OWNED_BUSINESS|_OWNED$","_SB_VENDORS", regex=True)
-        .str.replace("PROCEDURE_","")
-        .str.replace('ALASKAN_NATIVE_CORPORATION','ALASKAN_NATIVE_CORPORATION_SB_VENDORS')
-        .str.replace('NATIVE_HAWAIIAN_ORGANIZATION','NATIVE_HAWAIIAN_ORGANIZATION_SB_VENDORS')
-        .str.replace('TRIBAL','TRIBAL_SB_VENDORS')
-        )
+    counts = format_table(counts)
     return counts
 
 
@@ -386,9 +383,9 @@ if __name__ == '__main__':
     if st.sidebar.button("Reset"):
         reset_session_state()
 
-    st.caption("""Source: SBA Small Business Goaling Reports, FY09-FY22. A vendor is a unique DUNS or UEI that received a positive obligation in the fiscal year.\n
+    st.caption('''Source: SBA Small Business Goaling Reports, FY09-FY22. A vendor is a unique DUNS or UEI that received a positive obligation in the fiscal year.\n
     Abbreviations: SDB - Small Disadvantaged Business, WOSB - Women-owned small business, HUBZone - Historically Underutilized Business Zone, SDVOSB - Service-disabled veteran-owned small business.\n
-    This report consider transactions on the Small Business Goaling Report, after applying scorecard exclusions. Except for "All Vendors," the report considers only vendors that received a positive obligation in the given scorecard category (e.g., HUBZone vendors consider only vendors that received positive obligations in the HUBZone scorecard category).""")
+    This report consider transactions on the Small Business Goaling Report, after applying scorecard exclusions. Except for "All Vendors," the report considers only vendors that received a positive obligation in the given scorecard category (e.g., HUBZone vendors consider only vendors that received positive obligations in the HUBZone scorecard category).''')
 
     
 #%%
