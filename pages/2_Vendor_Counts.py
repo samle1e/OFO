@@ -1,164 +1,41 @@
 #%%
+import polars as pl
 import pandas as pd
-import duckdb
 import streamlit as st
-from snowflake.connector import connect
 import plotly.express as px
+import pyarrow.dataset as ds
+import os
 import pyarrow as pa
-import re
+import json
 import plotly.graph_objects as go
-from itertools import chain
-import pyarrow.compute as pc
 
+# datalake="C:\\Users\\SQLe\\U.S. Small Business Administration\\Office of Policy Planning and Liaison (OPPL) - Data Lake\\"
+
+# arrowds=ds.dataset(f"{datalake}/SBGR_parquet",format="parquet",partitioning = ds.HivePartitioning(
+#     pa.schema([("FY", pa.int16())])))
+# plds=pl.scan_ds(arrowds)
+
+# max_year = int(os.listdir(f"{datalake}/SBGR_parquet")[-1].replace("FY=",""))
+# min_year = int(os.listdir(f"{datalake}/SBGR_parquet")[0].replace("FY=",""))
+max_year=2022
+min_year=2009
 # %%
 st.set_page_config(
     page_title="SBA Vendor Count",
     page_icon="https://www.sba.gov/brand/assets/sba/img/pages/logo/logo.svg",
-    layout="wide",
+   # layout="wide",
     initial_sidebar_state="expanded",
 )
 
-hide_streamlit_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            </style>
-            """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True) 
-
-#%%
-def get_data (query):
-    con = connect(**st.secrets.snowflake_credentials)
-    cursor = con.cursor()
-    cursor.execute(query)
-    results = cursor.fetch_arrow_all()
-    cursor.close()
-    return results
-
-def collist():
-    x = dict(cols = [ 'COALESCE (VENDOR_DUNS_NUMBER, VENDOR_UEI) VENDOR_ID',
-            'ADDRESS_STATE',
-            'TRY_TO_NUMBER(SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5)) VENDOR_ADDRESS_ZIP_CODE',
-            'TRY_TO_NUMBER(PRINCIPAL_NAICS_CODE) PRINCIPAL_NAICS_CODE',
-            'FUNDING_AGENCY_NAME',
-            'FUNDING_DEPARTMENT_NAME',
-            'PRODUCT_OR_SERVICE_CODE',
-            'TYPE_OF_SET_ASIDE',
-            'IDV_TYPE_OF_SET_ASIDE',
-            'EVALUATED_PREFERENCE',
-            'TRY_TO_NUMBER(FISCAL_YEAR) FY'],
-    dolcols = ["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
-            "SMALL_BUSINESS_DOLLARS",
-            "SDB_DOLLARS",
-            "WOSB_DOLLARS",
-            "CER_HUBZONE_SB_DOLLARS",
-            "SRDVOB_DOLLARS",
-            'EIGHT_A_PROCEDURE_DOLLARS',
-            'VOSB_DOLLARS'],
-    flagcols = ['MINORITY_OWNED_BUSINESS_FLAG', #6
-            'APAOB_FLAG', #4
-            'BAOB_FLAG', #1
-            'HAOB_FLAG', #2
-            'NAOB_FLAG', #3
-            'SAAOB_FLAG',
-            'OTHER_MINORITY_OWNED', #5
-            'ALASKAN_NATIVE_CORPORATION',
-            'NATIVE_HAWAIIAN_ORGANIZATION',],
-    tribal = "TO_BOOLEAN(CASE WHEN INDIAN_TRIBE = \'YES\' OR TRIBALLY_OWNED = \'YES\' OR AIOB_FLAG = \'YES\' THEN 1 ELSE 0 END) TRIBAL"
-    )
-    return x
-
-def shrink_table (tb):
-    #convert large numeric types to smaller types
-    type_dict = {'VENDOR_ADDRESS_ZIP_CODE':pa.uint32(),
-            'PRINCIPAL_NAICS_CODE':pa.uint32(),
-            'FY':pa.uint16()}
-    newsch = tb.schema
-    for x in type_dict:
-            newsch = newsch.set(newsch.get_field_index(x),
-            pa.field(x, type_dict[x]))
-    tb = tb.cast(newsch)
-
-    #convert columns with common entries to dictionaries
-    from pyarrow.compute import dictionary_encode
-
-    dict_cols = ['FUNDING_AGENCY_NAME',
-            'FUNDING_DEPARTMENT_NAME',
-            'PRODUCT_OR_SERVICE_CODE',
-            'TYPE_OF_SET_ASIDE',
-            'IDV_TYPE_OF_SET_ASIDE']
-    for x in dict_cols:
-            i = tb.schema.get_field_index(x)
-            if tb.schema.types[i] != pa.dictionary(pa.int32(), pa.utf8()):
-                    tb = tb.set_column(i,x,dictionary_encode(tb[x]))
-
-    return tb
-
-@st.cache_data
-def get_vendor_data ():
-    cols = collist()
-    boolflagcols = [f"TO_BOOLEAN(CASE WHEN {x} = 'YES' THEN 1 ELSE 0 END) {x}" for x in cols['flagcols']] 
-    booldolcols = [f'TO_BOOLEAN(CASE WHEN {x} > 0 THEN 1 ELSE 0 END) {x}' for x in cols['dolcols']]
-    q = f'''
-            SELECT DISTINCT {', '.join(cols['cols'])}, {', '.join(booldolcols)}, {', '.join(boolflagcols)}, {cols['tribal']}
-                    FROM SMALL_BUSINESS_GOALING
-                    WHERE TOTAL_SB_ACT_ELIGIBLE_DOLLARS > 0
-            '''
-    tb = get_data (q)
-    tb = shrink_table(tb)
-    return tb
-#%%
-# get other tables needed
-
-@st.cache_data
-def get_DO_table ():
-    '''returns Pyarrow Table of district offices, zip codes, fips codes'''
-    q = 'SELECT * FROM SBA_DO_ZIP'
-    SBA_DO = get_data (q)
-    return SBA_DO
-
-@st.cache_data
-def naics_list ():
-    '''returns Pandas Series of NAICS names'''
-    links = ['https://www.census.gov/naics/reference_files_tools/2007/naics07.xls',
-             'https://www.census.gov/naics/2012NAICS/2-digit_2012_Codes.xls',
-             'https://www.census.gov/naics/2017NAICS/2-6%20digit_2017_Codes.xlsx']
-    
-    NAICS_sr = (pd.concat([(pd.read_excel(link)
-               .drop('Seq. No.', axis = 1)
-               .iloc[:,[0,1]]
-               .set_axis(['Code','Title'], axis=1)
-               .pipe(lambda _df: _df.assign(Code = _df.Code.astype(str)))
-               .set_index('Code')
-                )
-                  for link in links], axis=1)
-                 .pipe(lambda _df: _df.assign(industry = _df.apply(
-                    lambda row: next((val for val in row if pd.notnull(val)), pd.NA), axis=1)))
-                 .pipe(lambda _df:_df.drop(_df.columns[0:1],axis=1))
-                 .squeeze()
-                )
-    return NAICS_sr
-
-@st.cache_data
-def get_PSC_names(): 
-    '''returns Pandas Series of PSC names'''
-    PSClink = "https://www.acquisition.gov/sites/default/files/manual/PSC%20April%202022.xlsx"
-    PSCnames=(pd.read_excel(PSClink)
-            .drop_duplicates("PSC CODE",keep="first")
-            .assign(PSC_CODE=lambda _df: _df["PSC CODE"].astype(str))
-            .drop('PSC CODE', axis=1)
-            .set_index("PSC_CODE")
-            .filter(regex="NAME")
-            .pipe(lambda _df:_df.assign(Title = _df.iloc[:,1].combine_first(_df.iloc[:,0])))
-            .sort_index()
-            .loc[:,"Title"]
-            .squeeze())
-    return PSCnames
-
-
-
 #%%
 #extract vendor data
+vendorcols=["VENDOR_DUNS_NUMBER","VENDOR_UEI"]
+geocols=["VENDOR_ADDRESS_STATE_NAME","CONGRESSIONAL_DISTRICT"
+         ,'VENDOR_ADDRESS_ZIP_CODE',]
+buyercols=['FUNDING_DEPARTMENT_NAME','FUNDING_AGENCY_NAME']
+contractcols=['IDV_TYPE_OF_SET_ASIDE','TYPE_OF_SET_ASIDE','PRINCIPAL_NAICS_CODE']
+dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS","SMALL_BUSINESS_DOLLARS","SDB_DOLLARS","WOSB_DOLLARS","CER_HUBZONE_SB_DOLLARS","SRDVOB_DOLLARS"]
+
 vendor_dict={"TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"All Vendors"
             ,"SMALL_BUSINESS_DOLLARS":"Small Business Vendors"
             ,"SDB_DOLLARS":"SDB Vendors"
@@ -166,277 +43,217 @@ vendor_dict={"TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"All Vendors"
             ,"CER_HUBZONE_SB_DOLLARS":"HUBZone Vendors"
             ,"SRDVOB_DOLLARS":"SDVOSB Vendors"
     }
+newdolcols=list(vendor_dict.values())
 
-def reset_session_state ():
-    for x in st.session_state:
-        del st.session_state[x]
-    st.experimental_rerun()
-    
+set_aside_dict={
+        "SBA":"Small Business Set-Aside",
+        "RSB":"Small Business Set-Aside",
+        "ESB":"Small Business Set-Aside",
+        "SBP":"Partial SB Set-Aside",
+        "8A":"8(a) Competitive",
+        "8AN":"8(a) Sole Source",
+        "WOSB":"WOSB Set-Aside",
+        "WOSBSS":"WOSB Sole Source",
+        "EDWOSB":"EDWOSB Set-Aside",
+        "EDWOSBSS":"EDWOSB Sole Source",
+        "SDVOSBC":"SDVOSB Set-Aside",
+        "SDVOSBS":"SDVOSB Sole Source",
+        "HS3":"HUBZone Set-Aside",
+        "HZC":"HUBZone Set-Aside",
+        "HZS":"HUBZone Sole Source",
+    }
+department_select=['AGENCY FOR INTERNATIONAL DEVELOPMENT', 'AGRICULTURE, DEPARTMENT OF', 'COMMERCE, DEPARTMENT OF'
+          ,'DEPT OF DEFENSE', 'EDUCATION, DEPARTMENT OF', 'ENERGY, DEPARTMENT OF'
+          ,'ENVIRONMENTAL PROTECTION AGENCY', 'GENERAL SERVICES ADMINISTRATION', 'HEALTH AND HUMAN SERVICES, DEPARTMENT OF'
+          ,'HOMELAND SECURITY, DEPARTMENT OF', 'HOUSING AND URBAN DEVELOPMENT, DEPARTMENT OF', 'INTERIOR, DEPARTMENT OF THE'
+          ,'JUSTICE, DEPARTMENT OF', 'LABOR, DEPARTMENT OF', 'NATIONAL AERONAUTICS AND SPACE ADMINISTRATION'
+          ,'NATIONAL SCIENCE FOUNDATION', 'NUCLEAR REGULATORY COMMISSION', 'OFFICE OF PERSONNEL MANAGEMENT'
+          ,'SMALL BUSINESS ADMINISTRATION', 'SOCIAL SECURITY ADMINISTRATION', 'STATE, DEPARTMENT OF'
+          ,'TRANSPORTATION, DEPARTMENT OF', 'TREASURY, DEPARTMENT OF THE', 'VETERANS AFFAIRS, DEPARTMENT OF']
+state_select=['Alabama','Alaska','Arizona','Arkansas','California','Colorado','Connecticut',
+    'Delaware','District of Columbia','Florida','Georgia','Guam','Hawaii','Idaho','Illinois','Indiana',
+    'Iowa','Kansas','Kentucky','Louisiana',
+    'Maine','Maryland','Massachusetts','Michigan','Minnesota','Mississippi',
+    'Missouri','Montana','Nebraska','Nevada',
+    'New Hampshire','New Jersey','New Mexico','New York',
+    'North Carolina','North Dakota','Ohio','Oklahoma',
+    'Oregon','Pennsylvania','Puerto Rico','Rhode Island','South Carolina','South Dakota',
+    'Tennessee','Texas','Utah','Vermont','Virginia',
+    'Washington','West Virginia','Wisconsin','Wyoming']
+state_select=[x.upper() for x in state_select]
+#%%
+def get_vendors():
+    # vendors=plds.filter((pl.col("TOTAL_SB_ACT_ELIGIBLE_DOLLARS")>0) & (pl.col("FY")<max_year)).select(
+    #     vendorcols+geocols+buyercols+contractcols+["FY"]+[pl.col(dolcols).map(lambda x: x>0)]).with_columns(
+    #         pl.col("VENDOR_ADDRESS_ZIP_CODE").str.slice(0,5).alias("zip")
+    #     )
+    # vendors=vendors.unique()
+
+    # ZIP_match=pl.read_csv("ZIP_to_FIPS_Name_20230322.csv",columns=["FIPS","zip","County","state","bus_ratio","state_names"]
+    #                     ,dtypes={'zip':pl.Utf8, 'FIPS':pl.Utf8}
+    #                     ).sort(by="bus_ratio",descending=True
+    #                     ).drop("bus_ratio").unique(subset="zip",keep="first").lazy()
+    # vendors=vendors.join(ZIP_match,how="left",on="zip").drop(["VENDOR_ADDRESS_ZIP_CODE","zip"])
+
+    # vendors=vendors.with_columns(
+    #     pl.when(pl.col("FY")<=2021)
+    #     .then(pl.col("VENDOR_DUNS_NUMBER"))
+    #     .otherwise(pl.col("VENDOR_UEI"))
+    #     .alias("VENDOR_ID")
+    #     ).drop(["VENDOR_DUNS_NUMBER","VENDOR_UEI"])
+
+    #     #set-asides
+    # SBA_set_asides=["SBA","SBP","RSB", "8AN", "SDVOSBC" ,"8A", "HZC","WOSB","SDVOSBS","HZS","EDWOSB"
+    #     ,"WOSBSS","ESB","HS3","EDWOSBSS"]
+    # SBA_socio_asides=SBA_set_asides[3:]
+
+    # vendors=vendors.with_columns(
+    #     pl.when(pl.col('TYPE_OF_SET_ASIDE').is_in(SBA_socio_asides))
+    #         .then(pl.col('TYPE_OF_SET_ASIDE'))
+    #         .when(pl.col('IDV_TYPE_OF_SET_ASIDE').is_in(SBA_set_asides))
+    #         .then(pl.col('IDV_TYPE_OF_SET_ASIDE'))
+    #         .otherwise(pl.col('TYPE_OF_SET_ASIDE'))
+    #         .map_dict(set_aside_dict)
+    #         .alias("set_aside")
+    # ).drop(['IDV_TYPE_OF_SET_ASIDE','TYPE_OF_SET_ASIDE'])
+    # vendors=vendors.rename({"VENDOR_ADDRESS_STATE_NAME":"State","state":"state_abbr","FUNDING_DEPARTMENT_NAME":"Department"
+    #                             ,"FUNDING_AGENCY_NAME":"Agency","PRINCIPAL_NAICS_CODE":"NAICS"
+    #                             ,"CONGRESSIONAL_DISTRICT":"Congressional District"})
+    # vendors=vendors.rename(vendor_dict)
+    # return vendors
+    return pl.scan_parquet("VendorData.parquet")
+#%%
+# vendors=get_vendors().collect()
+# vendors.write_parquet("Data",row_group_size=1000000,use_pyarrow=True,compression="zstd",compression_level=22)
 
 #%%
-
-def address_state_vendor_address_zip_code ():
-    DO_table = get_DO_table ()
-    single_DO = (DO_table
-                .select(['SBA_DISTRICT_OFFICE','STATE'])
-                .to_pandas()
-                .drop_duplicates()
-                .set_index('STATE')
-                .loc[lambda _df:_df.value_counts('STATE')
-                      .loc[lambda s:s==1]
-                      .index
-                      .to_list()]
-                .squeeze()
-    )
-    
-    state_choices = sorted(DO_table.column('STATE_NAME').unique().to_pylist())
-    region_choices = [f'SBA Region {x}' for x in list(range(1,11))]
-    DO_choices = sorted(DO_table.column('SBA_DISTRICT_OFFICE').unique().to_pylist())
-
-    if 'region' not in st.session_state:
-        st.session_state.region='All'
-    
-    if 'state' not in st.session_state:
-        st.session_state.state=[]
-    
-    if 'do' not in st.session_state:
-        st.session_state.do='All'
-
-    state_select = st.sidebar.multiselect (label="State (pick multi)", options=state_choices,
-                                           key = 'state', args='state', disabled = ((st.session_state.region != 'All') | (st.session_state.do != 'All')))
-    region_select = st.sidebar.selectbox (label="SBA Region", options=['All']+region_choices,
-                                          key = 'region', args='region', disabled = ((len(st.session_state.state) > 0) | (st.session_state.do != 'All')))
-    DO_select = st.sidebar.selectbox (label="SBA District Office", options=['All']+DO_choices,
-                                          key = 'do', args='do', disabled = ((st.session_state.region != 'All') | (len(st.session_state.state) > 0)))
-    
-    state_abbr = DO_table.select(['STATE_NAME','STATE']).group_by('STATE').aggregate([('STATE_NAME','one')]
-                     ).to_pandas().set_index('STATE_NAME_one').squeeze().to_dict()
-    
-    address_state = []
-    vendor_address_zip_code = []
-    if len(state_select)>0:
-        address_state = [state_abbr[x] for x in state_select]
-        vendor_address_zip_code = []
-    elif region_select != 'All':
-        address_state = (DO_table
-                         .filter(pc.field('SBA_REGION')==region_select.split(' ')[-1])
-                         .column('STATE').unique()).to_pylist()
-        vendor_address_zip_code = []
-    elif DO_select != 'All':
-        if DO_select in single_DO.to_list():
-            address_state = single_DO.loc[single_DO==DO_select].index.to_list()
-            vendor_address_zip_code = (DO_table
-                                        .filter(~pc.field('STATE').isin(address_state))
-                                        .filter(pc.field('SBA_DISTRICT_OFFICE')==DO_select)
-                                        .column('ZIP_CODE')).to_pylist()
-        else:
-            vendor_address_zip_code = (DO_table.filter(pc.field('SBA_DISTRICT_OFFICE')==DO_select)
-                                        .column('ZIP_CODE')).to_pylist()
-    return {'ADDRESS_STATE':address_state, 'VENDOR_ADDRESS_ZIP_CODE':vendor_address_zip_code}
-
-@st.cache_data
-def dept_agency_choices():
-    tb = get_vendor_data()
-    dept_agency = (tb.group_by(['FUNDING_DEPARTMENT_NAME', 'FUNDING_AGENCY_NAME'])
-                   .aggregate([('FUNDING_AGENCY_NAME','distinct')]).to_pandas()
-                   .groupby('FUNDING_DEPARTMENT_NAME')['FUNDING_AGENCY_NAME']
-                   .apply(list)
-                   .to_dict()
-    )
-    return dept_agency
-
-def funding_department_name_agency_name ():
-    da_choices = dept_agency_choices()
-    choices = sorted(list(da_choices.keys()))
-    if 'dept' not in st.session_state:
-        st.session_state.dept=[]
-    if 'agency_name' not in st.session_state:
-        st.session_state.agency_name=[]
-    funding_department_name = st.sidebar.multiselect(label="Department"
-                                        , options=choices, key = 'dept')
-    
-    agency_choices = []
-    if len(funding_department_name) == 1:
-        agency_choices = sorted(da_choices[funding_department_name[0]])
-    agency_name = st.sidebar.multiselect(label="Agency", options = agency_choices, key = 'agency_name'
-                                         , disabled = (len(funding_department_name) != 1))   
-    return {'FUNDING_DEPARTMENT_NAME': funding_department_name, 'FUNDING_AGENCY_NAME': agency_name}
-
-def get_NAICS ():
-    naicslst = naics_list ()
-    options = [f"{index}: {value}" for index, value in naicslst.items()]
-    if 'naics' not in st.session_state:
-        st.session_state.naics=[]
-    NAICS_pick = st.sidebar.multiselect (label="NAICS (pick multi)", options = options
-                                         , key = 'naics')
-    
-    NAICS_pick_long = [m 
-        for l in NAICS_pick 
-        for m in (list(range(
-            int(l.split(':')[0].split('-')[0]), 
-            int(l.split(':')[0].split('-')[1])+1)) 
-        if '-' in l 
-        else [int(l.split(':')[0])])
-        ]
-
-    NAICS6_pick = [int(num) for num in naicslst.index.to_list() 
-                   if len(num) == 6 and 
-                   any(num.startswith(str(prefix)) for prefix in NAICS_pick_long)]
-    return {'PRINCIPAL_NAICS_CODE': NAICS6_pick}
-    
-def get_PSC ():
-    PSC_list = get_PSC_names()
-    options = [f"{index}: {value}" for index, value in PSC_list.items()]
-    if 'psc' not in st.session_state:
-        st.session_state.psc=[]
-    psc_pick = st.sidebar.multiselect (label="PSCs (pick multi)", options = options, key = 'psc')
-    psc_pick = [x.split(':')[0] for x in psc_pick]
-
-    psc_pick_long = [pick for pick in PSC_list.index.to_list() 
-                   if len(pick) == 4 and 
-                   any(pick.startswith(prefix) for prefix in psc_pick)]
-    return {'PRODUCT_OR_SERVICE_CODE': psc_pick_long}
-
-def get_set_aside ():
-    set_aside_dict={'Small Business Set-Aside': 'ESB',
-        'Partial SB Set-Aside': 'SBP',
-        '8(a) Competitive': '8A',
-        '8(a) Sole Source': '8AN',
-        'WOSB Set-Aside': 'WOSB',
-        'WOSB Sole Source': 'WOSBSS',
-        'EDWOSB Set-Aside': 'EDWOSB',
-        'EDWOSB Sole Source': 'EDWOSBSS',
-        'SDVOSB Set-Aside': 'SDVOSBC',
-        'SDVOSB Sole Source': 'SDVOSBS',
-        'HUBZone Set-Aside': 'HZC',
-        'HUBZone Sole Source': 'HZS',
-        'HUBZone Price Evaluation Preference': 'HZE'}
-
-    options = set_aside_dict.keys()
-    if 'set_aside' not in  st.session_state:
-        st.session_state.set_aside=[]
-    set_aside_pick = st.sidebar.multiselect (label="Set Asides (pick multi)", options = options, key = 'set_aside')
-    set_aside_pick = [set_aside_dict[pick] for pick in set_aside_pick]
-    return {'SET_ASIDE': set_aside_pick}
-
-def counts_table (all_ct=True, **kwargs): 
-    #kwargs is a series of keyword:list pairs that can be used to filter the table
-    tb = get_vendor_data()
-
-    if ('ADDRESS_STATE' in kwargs) and ('VENDOR_ADDRESS_ZIP_CODE' in kwargs):
-        tb = tb.filter(pc.field('ADDRESS_STATE').isin(kwargs['ADDRESS_STATE']) | pc.field('VENDOR_ADDRESS_ZIP_CODE').isin(kwargs['VENDOR_ADDRESS_ZIP_CODE']) )
-        del kwargs['ADDRESS_STATE']
-        del kwargs['VENDOR_ADDRESS_ZIP_CODE']
-
-    if 'SET_ASIDE' in kwargs:
-        tb = tb.filter(pc.field('TYPE_OF_SET_ASIDE').isin(kwargs['SET_ASIDE']) | 
-                       pc.field('IDV_TYPE_OF_SET_ASIDE').isin(kwargs['SET_ASIDE']) |
-                       pc.field('EVALUATED_PREFERENCE').isin(kwargs['SET_ASIDE']) )
-        del kwargs['SET_ASIDE']
-
-    for x in kwargs:
-        tb = tb.filter(pc.field(x).isin(kwargs[x]))
-    
-    bool_fields = [name for name, typ in zip(tb.column_names, tb.schema.types) if typ == pa.bool_() and name != 'TOTAL_SB_ACT_ELIGIBLE_DOLLARS']
-
-    sb_counts = duckdb.sql(f'''
-            SELECT FY,
-                {', '.join([f'COUNT(DISTINCT CASE WHEN {x} = true THEN VENDOR_ID END) AS {x}' for x in bool_fields])}
-                FROM tb
-                WHERE SMALL_BUSINESS_DOLLARS = true
-                GROUP BY FY
-                ORDER BY FY
-            ''').df().set_index('FY')
-    if all_ct:
-        all_counts = duckdb.sql(f'''
-                SELECT FY, COUNT (DISTINCT VENDOR_ID) AS TOTAL_VENDORS
-                    FROM tb
-                    GROUP BY FY
-                    ORDER BY FY
-                ''').df().set_index('FY')
-        counts =  all_counts.join(sb_counts)
-    else:
-        counts = sb_counts
-    counts.index = counts.index.map(str)
-    counts.columns = (counts.columns
-        .str.replace("_DOLLARS","_VENDORS")
-        .str.replace("B_FLAG|_OWNED_BUSINESS|_OWNED$","_SB_VENDORS", regex=True)
-        .str.replace("PROCEDURE_","")
-        .str.replace('ALASKAN_NATIVE_CORPORATION','ALASKAN_NATIVE_CORPORATION_SB_VENDORS')
-        .str.replace('NATIVE_HAWAIIAN_ORGANIZATION','NATIVE_HAWAIIAN_ORGANIZATION_SB_VENDORS')
-        .str.replace('TRIBAL','TRIBAL_SB_VENDORS')
+def get_counts(vendors,var):
+    for x in newdolcols:
+        vendors=vendors.with_columns(
+            pl.when(pl.col(x)==True)
+            .then(pl.col("VENDOR_ID"))
+            .otherwise(pl.lit("@"))
+            .alias(x)
         )
-    return counts
+    counts=vendors.select(newdolcols+[var]).groupby(var,maintain_order=True).n_unique()
+    counts_adj=counts.select([pl.col(var),pl.col(newdolcols).map(lambda x:x-1)]).collect().to_pandas().set_index(var)
+    return counts_adj
 
-
-
-if __name__ == '__main__':
-    st.title("SBA Vendor Counts")
-    st.caption('This report shows the number of vendors that received a positive obligation in the Small Business Goals Report, after applying scorecard exclusions. Except for Total Vendors, only small businesses are counted.')
-    d={}
-    d.update(address_state_vendor_address_zip_code())
-    d.update(funding_department_name_agency_name())
-    d.update(get_PSC())
-    d.update(get_NAICS())
-    d.update(get_set_aside())
-    for x in d.copy():
-        if d[x] == 'All' or d[x] == []:
-            del d[x]
-    st.table(counts_table(True,**d))
-    if st.sidebar.button("Reset"):
-        reset_session_state()
-
-    st.caption("""Source: SBA Small Business Goaling Reports, FY09-FY22. A vendor is a unique DUNS or UEI that received a positive obligation in the fiscal year.\n
-    Abbreviations: SDB - Small Disadvantaged Business, WOSB - Women-owned small business, HUBZone - Historically Underutilized Business Zone, SDVOSB - Service-disabled veteran-owned small business.\n
-    This report consider transactions on the Small Business Goaling Report, after applying scorecard exclusions. Except for "All Vendors," the report considers only vendors that received a positive obligation in the given scorecard category (e.g., HUBZone vendors consider only vendors that received positive obligations in the HUBZone scorecard category).""")
-
-    
 #%%
+@st.cache_data
+def get_choices():
+    # vendors=get_vendors().collect().to_pandas()
+    # six_digit_NAICS=vendors["NAICS"].drop_duplicates().sort_values().dropna()
+    # two_digit_NAICS=six_digit_NAICS.str.slice(0,2).drop_duplicates().dropna()
 
-# map_select=st.sidebar.selectbox(label="Map what type of vendor?",options=newdolcols,index=1)
-# year=st.sidebar.slider(label="Map which Fiscal Year?",min_value=min_year, max_value=max_year,value=max_year)
-# vendor_map=vendors.filter(pl.col("FY")==year)
+    # NAICS_select=pd.concat([
+    #     two_digit_NAICS,six_digit_NAICS], ignore_index=True
+    #     ).drop_duplicates().sort_values().to_list()
 
-# #%%
-# def get_count_map(vendors,col,var):
-#     for x in newdolcols:
-#         vendors=vendors.with_columns(
-#         pl.when(pl.col(x)==True)
-#         .then(pl.col("VENDOR_ID"))
-#         .otherwise(pl.lit("@"))
-#         .alias(x)
-#     )
-#     counts=vendors.select([col]+[var]).groupby(var).n_unique()
-#     counts_adj=counts.select([pl.col(var),pl.col(col).map(lambda x:x-1)]).collect().to_pandas().set_index(var)
-#     return counts_adj
-# #%%
-# #prepare table and plots
+    # agency_select={}
+    # for x in department_select:
+    #     agency_list=vendors[vendors['Department']==x]["Agency"].drop_duplicates().sort_values().to_list()
+    #     agency_select.update({x:agency_list})
+    # county_select={}
+    # for x in state_select:
+    #     county_list=vendors.loc[vendors['State']==x]["County"].drop_duplicates().sort_values().to_list()
+    #     county_select.update({x:county_list})
+    # CD_select={}
+    # for x in state_select:
+    #     CD_list=vendors.loc[vendors['State']==x]["Congressional District"].drop_duplicates().sort_values().to_list()
+    #     CD_select.update({x:CD_list})
 
-# vendor_table=get_counts(vendors,"FY")
-# pal = ["#002e6d", "#cc0000", "#969696", "#007dbc", "#197e4e", "#f1c400"]
-# fig=px.line(vendor_table,x=vendor_table.index,y=vendor_table.columns
-#             ,    color_discrete_sequence=pal,labels={"index":"FY","value":"vendors","variable":""}
-# )
-# # st.write(map_select)
-# # st.write(year)
-# map_table= get_count_map(vendor_map,map_select,"state_abbr").iloc[:,0]
+    # choices=[NAICS_select,agency_select,county_select,CD_select]
+    # return choices
+    return json.load(open ('Vendorchoices.json', 'r'))
+#%%
+choices=get_choices()
+#json.dump(choices,open('choices.json', 'w'))
 
-# fig2 = go.Figure(data=go.Choropleth(
-#     locations=map_table.index, # Spatial coordinates
-#     z = map_table.array, # Data to be color-coded
-#     locationmode = 'USA-states', # set of locations match entries in `locations`
-#     colorscale = 'Portland',
-#     colorbar_title = "Vendors",
-# ))
+NAICS_select, agency_select, county_select, CD_select=get_choices()
+department_select=list(agency_select.keys())
+state_select=list(county_select.keys())
+set_aside_select=list(dict.fromkeys(set_aside_dict.values()))
 
-# fig2.update_layout(
-#     geo_scope='usa',
-# )
-# #%%    
-# if fig:
-#     st.plotly_chart(fig)
+#%%
+#initial_display
+vendors=get_vendors()
+#vendors.collect().write_parquet("vendors.parquet")
+#%%
+# user input
+st.title("SBA Vendor Counts")
+department=st.sidebar.selectbox(label="Department",options=["All"]+department_select,index=0)
+if department != 'All':
+    agency=st.sidebar.selectbox(label="Agency",options=["All"]+agency_select[department])
+    vendors=vendors.filter(pl.col("Department")==department)
 
-# st.table(vendor_table)
+NAICS=st.sidebar.multiselect(label="NAICS",options=NAICS_select)
+if len(NAICS)>0:
+    vendors=vendors.filter(pl.col("NAICS").is_in(NAICS))
 
-# if fig2:
-#     st.plotly_chart(fig2)
+set_aside=st.sidebar.multiselect(label="Set Aside",options=set_aside_select)
+if len(set_aside)>0:
+    vendors=vendors.filter(pl.col("set_aside").is_in(set_aside))
+
+state=st.sidebar.multiselect(label="State",options=state_select)
+if len(state)>0:
+    vendors=vendors.filter(pl.col("State").is_in(state))
+if (len(state)==1):
+    county=st.sidebar.multiselect(label="County",options=["All"]+county_select[state[0]],default="All")
+    try:
+        if (len(county)>0) & (county[0]!="All"):
+            vendors=vendors.filter(pl.col("County").is_in(county))
+    except:pass
+    CD=st.sidebar.multiselect(label="Congressional District",options=["All"]+CD_select[state[0]],default="All")
+    try:
+        if (len(CD)>0) & (CD[0]!= "All"): 
+            vendors=vendors.filter(pl.col("Congressional District").is_in(CD))
+    except:pass
+
+map_select=st.sidebar.selectbox(label="Map what type of vendor?",options=newdolcols,index=1)
+year=st.sidebar.slider(label="Map which Fiscal Year?",min_value=min_year, max_value=max_year,value=max_year)
+vendor_map=vendors.filter(pl.col("FY")==year)
+
+#%%
+def get_count_map(vendors,col,var):
+    for x in newdolcols:
+        vendors=vendors.with_columns(
+        pl.when(pl.col(x)==True)
+        .then(pl.col("VENDOR_ID"))
+        .otherwise(pl.lit("@"))
+        .alias(x)
+    )
+    counts=vendors.select([col]+[var]).groupby(var).n_unique()
+    counts_adj=counts.select([pl.col(var),pl.col(col).map(lambda x:x-1)]).collect().to_pandas().set_index(var)
+    return counts_adj
+#%%
+#prepare table and plots
+
+vendor_table=get_counts(vendors,"FY")
+pal = ["#002e6d", "#cc0000", "#969696", "#007dbc", "#197e4e", "#f1c400"]
+fig=px.line(vendor_table,x=vendor_table.index,y=vendor_table.columns
+            ,    color_discrete_sequence=pal,labels={"index":"FY","value":"vendors","variable":""}
+)
+# st.write(map_select)
+# st.write(year)
+map_table= get_count_map(vendor_map,map_select,"state_abbr").iloc[:,0]
+
+fig2 = go.Figure(data=go.Choropleth(
+    locations=map_table.index, # Spatial coordinates
+    z = map_table.array, # Data to be color-coded
+    locationmode = 'USA-states', # set of locations match entries in `locations`
+    colorscale = 'Portland',
+    colorbar_title = "Vendors",
+))
+
+fig2.update_layout(
+    geo_scope='usa',
+)
+#%%    
+if fig:
+    st.plotly_chart(fig)
+
+st.table(vendor_table)
+
+if fig2:
+    st.plotly_chart(fig2)
