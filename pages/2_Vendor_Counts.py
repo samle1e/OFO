@@ -301,12 +301,21 @@ def get_set_aside ():
 def format_table (df):
     df.index = df.index.map(str)
     df.columns = (df.columns
-        .str.replace("_DOLLARS","_VENDORS")
-        .str.replace("B_FLAG|_OWNED_BUSINESS|_OWNED$","_SB_VENDORS", regex=True)
-        .str.replace("PROCEDURE_","")
-        .str.replace('ALASKAN_NATIVE_CORPORATION','ALASKAN_NATIVE_CORPORATION_SB_VENDORS')
-        .str.replace('NATIVE_HAWAIIAN_ORGANIZATION','NATIVE_HAWAIIAN_ORGANIZATION_SB_VENDORS')
-        .str.replace('TRIBAL','TRIBAL_SB_VENDORS')
+        .str.replace("_DOLLARS","_Vendors")
+        .str.replace("B_FLAG|_OWNED_BUSINESS|_OWNED$","_SB_Vendors", regex=True)
+        .str.replace("EIGHT_A_PROCEDURE_","8(a) Contracts_")
+        .str.replace('ALASKAN_NATIVE_CORPORATION','Alaska_Native_Corporation_SB_Vendors')
+        .str.replace('NATIVE_HAWAIIAN_ORGANIZATION','Native_Hawaiian_Organization_SB_Vendors')
+        .str.replace('TRIBAL','Tribal_SB_VENDORS')
+        .str.replace('CER_','')
+        .str.replace('SRDVOB_','SDVOSB_')
+        .str.replace('TOTAL','Total')
+        .str.replace('SMALL_BUSINESS','Small_Business')
+        .str.replace('ZONE','Zone')
+        .str.replace('MINORITY','Minority')
+        .str.replace('OTHER','Other')
+        .str.replace('VENDORS','Vendors')
+        .str.replace('_FLAG','')
         )
     df = df.set_axis(df.columns.str.replace('_',' '), axis=1)
     return df
@@ -365,7 +374,7 @@ def counts_table (all_ct=True, **kwargs):
 
 if __name__ == '__main__':
     st.title("SBA Vendor Counts")
-    st.caption('This report shows the number of vendors that received a positive obligation in the Small Business Goals Report, after applying scorecard exclusions. Except for Total Vendors, only small businesses are counted.')
+    st.caption('This report shows the number of vendors that received a positive obligation in the Small Business Goaling Report, after applying scorecard exclusions. Except for Total Vendors, only small businesses are counted.')
     d={}
     d.update(address_state_vendor_address_zip_code())
     d.update(funding_department_name_agency_name())
@@ -375,13 +384,46 @@ if __name__ == '__main__':
     for x in d.copy():
         if d[x] == 'All' or d[x] == []:
             del d[x]
-    st.table(counts_table(True,**d))
+    countdf = counts_table(True,**d)
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=countdf.index,
+        y=countdf['Small Business Vendors'],
+        name='Small Business Vendors',
+        visible=True  # Make this line visible initially
+    ))
+
+    # Set visibility to 'legendonly' for all other lines
+    for column in countdf.columns:
+        if column != 'Small Business Vendors':
+            fig.add_trace(go.Scatter(
+                x=countdf.index,
+                y=countdf[column],
+                name=column,
+                visible='legendonly'
+            ))
+
+    # Update the layout
+    fig.update_layout(
+        xaxis_title='Fiscal Year',
+        yaxis_title='Number of Vendors',
+            xaxis=dict(
+        tickmode='linear',
+        dtick=2
+    ))
+    st.plotly_chart(fig)
+    st.table(countdf.style.format('{:,}'))
+
+    st.download_button("Download this table", data=countdf.to_csv().encode('utf-8'), file_name='SBA_Vendor_Counts.csv', mime='text/csv')
     if st.sidebar.button("Reset"):
         reset_session_state()
 
-    st.caption('''Source: SBA Small Business Goaling Reports, FY09-FY22. A vendor is a unique DUNS or UEI that received a positive obligation in the fiscal year.\n
-    Abbreviations: SDB - Small Disadvantaged Business, WOSB - Women-owned small business, HUBZone - Historically Underutilized Business Zone, SDVOSB - Service-disabled veteran-owned small business.\n
-    This report consider transactions on the Small Business Goaling Report, after applying scorecard exclusions. Except for "All Vendors," the report considers only vendors that received a positive obligation in the given scorecard category (e.g., HUBZone vendors consider only vendors that received positive obligations in the HUBZone scorecard category).''')
+
+    st.caption('''Source: SBA Small Business Goaling Reports. A vendor is a unique DUNS or UEI that received a positive obligation in the fiscal year.
+    Abbreviations: SDB - Small Disadvantaged Business, WOSB - Women-owned small business, HUBZone - Historically Underutilized Business Zone, SDVOSB - Service-disabled veteran-owned small business,
+    APAO - Asian Pacific American Owned, BAO - Black American Owned, HAO - Hispanic American Owned, NAO - Native American Owned, SAAO - South Asian American Owned.
+    ''')
     cursor.close()
     
 #%%
