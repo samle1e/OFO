@@ -25,15 +25,16 @@ hide_streamlit_style = """
             </style>
             """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True) 
-
+con = connect(**st.secrets.snowflake_credentials)
+cursor = con.cursor()
 #%%
 @st.cache_resource
-def get_data (query):
-    con = connect(**st.secrets.snowflake_credentials)
-    cursor = con.cursor()
-    cursor.execute(query)
-    results = cursor.fetch_arrow_all()
-    cursor.close()
+def get_data (query, params=None):
+    if params:
+        cursor.execute(query, params)
+    else: 
+        cursor.execute(query)
+    results = cursor.fetch_pandas_all()
     return results
 
 def collist():
@@ -48,8 +49,7 @@ def collist():
             'IDV_TYPE_OF_SET_ASIDE',
             'EVALUATED_PREFERENCE',
             'TRY_TO_NUMBER(FISCAL_YEAR) FY'],
-    dolcols = ["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
-            "SMALL_BUSINESS_DOLLARS",
+    dolcols = ["SMALL_BUSINESS_DOLLARS",
             "SDB_DOLLARS",
             "WOSB_DOLLARS",
             "CER_HUBZONE_SB_DOLLARS",
@@ -95,19 +95,19 @@ def shrink_table (tb):
 
     return tb
 
-@st.cache_data
-def get_vendor_data ():
-    cols = collist()
-    boolflagcols = [f"TO_BOOLEAN(CASE WHEN {x} = 'YES' THEN 1 ELSE 0 END) {x}" for x in cols['flagcols']] 
-    booldolcols = [f'TO_BOOLEAN(CASE WHEN {x} > 0 THEN 1 ELSE 0 END) {x}' for x in cols['dolcols']]
-    q = f'''
-            SELECT DISTINCT {', '.join(cols['cols'])}, {', '.join(booldolcols)}, {', '.join(boolflagcols)}, {cols['tribal']}
-                    FROM SMALL_BUSINESS_GOALING
-                    WHERE TOTAL_SB_ACT_ELIGIBLE_DOLLARS > 0
-            '''
-    tb = get_data (q)
-    tb = shrink_table(tb)
-    return tb
+# @st.cache_data
+# def get_vendor_data ():
+#     cols = collist()
+#     boolflagcols = [f"TO_BOOLEAN(CASE WHEN {x} = 'YES' THEN 1 ELSE 0 END) {x}" for x in cols['flagcols']] 
+#     booldolcols = [f'TO_BOOLEAN(CASE WHEN {x} > 0 THEN 1 ELSE 0 END) {x}' for x in cols['dolcols']]
+#     q = f'''
+#             SELECT DISTINCT {', '.join(cols['cols'])}, {', '.join(booldolcols)}, {', '.join(boolflagcols)}, {cols['tribal']}
+#                     FROM SMALL_BUSINESS_GOALING
+#                     WHERE TOTAL_SB_ACT_ELIGIBLE_DOLLARS > 0
+#             '''
+#     tb = get_data (q)
+#     tb = shrink_table(tb)
+#     return tb
 #%%
 # get other tables needed
 
@@ -170,8 +170,7 @@ def reset_session_state ():
 def address_state_vendor_address_zip_code ():
     DO_table = get_DO_table ()
     single_DO = (DO_table
-                .select(['SBA_DISTRICT_OFFICE','STATE'])
-                .to_pandas()
+                .loc[:,['SBA_DISTRICT_OFFICE','STATE']]
                 .drop_duplicates()
                 .set_index('STATE')
                 .loc[lambda _df:_df.value_counts('STATE')
@@ -181,9 +180,9 @@ def address_state_vendor_address_zip_code ():
                 .squeeze()
     )
     
-    state_choices = sorted(DO_table.column('STATE_NAME').unique().to_pylist())
+    state_choices = sorted(DO_table['STATE_NAME'].unique().tolist())
     region_choices = [f'SBA Region {x}' for x in list(range(1,11))]
-    DO_choices = sorted(DO_table.column('SBA_DISTRICT_OFFICE').unique().to_pylist())
+    DO_choices = sorted(DO_table['SBA_DISTRICT_OFFICE'].unique().tolist())
 
     if 'region' not in st.session_state:
         st.session_state.region='All'
@@ -201,8 +200,7 @@ def address_state_vendor_address_zip_code ():
     DO_select = st.sidebar.selectbox (label="SBA District Office", options=['All']+DO_choices,
                                           key = 'do', args='do', disabled = ((st.session_state.region != 'All') | (len(st.session_state.state) > 0)))
     
-    state_abbr = DO_table.select(['STATE_NAME','STATE']).group_by('STATE').aggregate([('STATE_NAME','one')]
-                     ).to_pandas().set_index('STATE_NAME_one').squeeze().to_dict()
+    state_abbr = DO_table.loc[:,['STATE_NAME','STATE']].drop_duplicates().set_index('STATE_NAME').squeeze().to_dict()
     
     address_state = []
     vendor_address_zip_code = []
@@ -210,32 +208,21 @@ def address_state_vendor_address_zip_code ():
         address_state = [state_abbr[x] for x in state_select]
         vendor_address_zip_code = []
     elif region_select != 'All':
-        address_state = (DO_table
-                         .filter(pc.field('SBA_REGION')==region_select.split(' ')[-1])
-                         .column('STATE').unique()).to_pylist()
+        address_state = DO_table.loc[DO_table.SBA_REGION==region_select.split(' ')[-1],'STATE'].unique().tolist()
         vendor_address_zip_code = []
     elif DO_select != 'All':
         if DO_select in single_DO.to_list():
             address_state = single_DO.loc[single_DO==DO_select].index.to_list()
-            vendor_address_zip_code = (DO_table
-                                        .filter(~pc.field('STATE').isin(address_state))
-                                        .filter(pc.field('SBA_DISTRICT_OFFICE')==DO_select)
-                                        .column('ZIP_CODE')).to_pylist()
+            vendor_address_zip_code = DO_table.loc[~DO_table.STATE.isin(address_state) & DO_table.SBA_DISTRICT_OFFICE==DO_select, 'ZIP_CODE'].tolist()
         else:
-            vendor_address_zip_code = (DO_table.filter(pc.field('SBA_DISTRICT_OFFICE')==DO_select)
-                                        .column('ZIP_CODE')).to_pylist()
+            vendor_address_zip_code = DO_table.loc[DO_table.SBA_DISTRICT_OFFICE==DO_select, 'ZIP_CODE'].tolist()
     return {'ADDRESS_STATE':address_state, 'VENDOR_ADDRESS_ZIP_CODE':vendor_address_zip_code}
 
 @st.cache_data
 def dept_agency_choices():
-    tb = get_vendor_data()
-    dept_agency = (tb.group_by(['FUNDING_DEPARTMENT_NAME', 'FUNDING_AGENCY_NAME'])
-                   .aggregate([('FUNDING_AGENCY_NAME','distinct')]).to_pandas()
-                   .groupby('FUNDING_DEPARTMENT_NAME')['FUNDING_AGENCY_NAME']
-                   .apply(list)
-                   .to_dict()
-    )
-    return dept_agency
+    dept_agency = get_data("SELECT DISTINCT FUNDING_DEPARTMENT_NAME, FUNDING_AGENCY_NAME FROM SMALL_BUSINESS_GOALING")
+    dict = {key: list(group['FUNDING_AGENCY_NAME']) for key, group in dept_agency.groupby('FUNDING_DEPARTMENT_NAME')}
+    return dict
 
 def funding_department_name_agency_name ():
     da_choices = dept_agency_choices()
@@ -326,40 +313,49 @@ def format_table (df):
 
 def counts_table (all_ct=True, **kwargs): 
     #kwargs is a series of keyword:list pairs that can be used to filter the table
-    tb = get_vendor_data()
-
+    filter = []
     if ('ADDRESS_STATE' in kwargs) and ('VENDOR_ADDRESS_ZIP_CODE' in kwargs):
-        tb = tb.filter(pc.field('ADDRESS_STATE').isin(kwargs['ADDRESS_STATE']) | pc.field('VENDOR_ADDRESS_ZIP_CODE').isin(kwargs['VENDOR_ADDRESS_ZIP_CODE']) )
-        del kwargs['ADDRESS_STATE']
-        del kwargs['VENDOR_ADDRESS_ZIP_CODE']
+        filter.append (f"(ADDRESS_STATE in (%(ADDRESS_STATE)s) OR SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) in (%(VENDOR_ADDRESS_ZIP_CODE)s))")
+    elif 'VENDOR_ADDRESS_ZIP_CODE' in kwargs:
+        filter.append (f"SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) in (%(VENDOR_ADDRESS_ZIP_CODE)s))")
+    elif 'ADDRESS_STATE' in kwargs:
+        filter.append (f"ADDRESS_STATE in (%(ADDRESS_STATE)s)")
 
     if 'SET_ASIDE' in kwargs:
-        tb = tb.filter(pc.field('TYPE_OF_SET_ASIDE').isin(kwargs['SET_ASIDE']) | 
-                       pc.field('IDV_TYPE_OF_SET_ASIDE').isin(kwargs['SET_ASIDE']) |
-                       pc.field('EVALUATED_PREFERENCE').isin(kwargs['SET_ASIDE']) )
-        del kwargs['SET_ASIDE']
+        filter.append (f"(TYPE_OF_SET_ASIDE IN (%(SET_ASIDE)s) OR \
+                       IDV_TYPE_OF_SET_ASIDE IN (%(SET_ASIDE)s) OR EVALUATED_PREFERENCE IN (%(SET_ASIDE)s))")
 
     for x in kwargs:
-        tb = tb.filter(pc.field(x).isin(kwargs[x]))
-    
-    bool_fields = [name for name, typ in zip(tb.column_names, tb.schema.types) if typ == pa.bool_() and name != 'TOTAL_SB_ACT_ELIGIBLE_DOLLARS']
+        if x not in ['ADDRESS_STATE', 'VENDOR_ADDRESS_ZIP_CODE', 'SET_ASIDE']:
+            filter.append(f"{x} in (%({x})s)")
 
-    sb_counts = duckdb.sql(f'''
-            SELECT FY,
-                {', '.join([f'COUNT(DISTINCT CASE WHEN {x} = true THEN VENDOR_ID END) AS {x}' for x in bool_fields])}
-                FROM tb
-                WHERE SMALL_BUSINESS_DOLLARS = true
-                GROUP BY FY
-                ORDER BY FY
-            ''').df().set_index('FY')
-    if all_ct:
-        all_counts = duckdb.sql(f'''
-                SELECT FY, COUNT (DISTINCT VENDOR_ID) AS TOTAL_VENDORS
-                    FROM tb
-                    GROUP BY FY
-                    ORDER BY FY
-                ''').df().set_index('FY')
-        counts =  all_counts.join(sb_counts)
+    filter_all = ' AND '.join(filter)
+
+    if filter_all == '':
+        filter_all = '1=1'
+   
+    cols = collist()
+
+    sb_counts = get_data(f'''
+            SELECT FISCAL_YEAR,
+                {", ".join([f"COUNT(DISTINCT CASE WHEN {x} > 0 THEN COALESCE (VENDOR_DUNS_NUMBER, VENDOR_UEI) END) AS {x}" for x in cols["dolcols"]])},
+                {", ".join([f"COUNT(DISTINCT CASE WHEN {x} = 'YES' THEN COALESCE (VENDOR_DUNS_NUMBER, VENDOR_UEI) END) AS {x}" for x in cols["flagcols"]])},
+                COUNT(DISTINCT CASE WHEN INDIAN_TRIBE = 'YES' OR TRIBALLY_OWNED = 'YES' OR AIOB_FLAG = 'YES' THEN COALESCE (VENDOR_DUNS_NUMBER, VENDOR_UEI) END) TRIBAL
+                FROM SMALL_BUSINESS_GOALING
+                WHERE SMALL_BUSINESS_DOLLARS > 0 AND {filter_all}
+                GROUP BY FISCAL_YEAR
+                ORDER BY FISCAL_YEAR
+            ''', kwargs).set_index('FISCAL_YEAR')
+    if all_ct: 
+        all_df = get_data(f'''
+                SELECT FISCAL_YEAR, 
+                COUNT (DISTINCT COALESCE (VENDOR_DUNS_NUMBER, VENDOR_UEI)) AS TOTAL_VENDORS
+                    FROM SMALL_BUSINESS_GOALING
+                    WHERE TOTAL_SB_ACT_ELIGIBLE_DOLLARS > 0 AND {filter_all}
+                    GROUP BY FISCAL_YEAR
+                    ORDER BY FISCAL_YEAR
+                ''', kwargs).set_index('FISCAL_YEAR')
+        counts =  all_df.join(sb_counts)
     else:
         counts = sb_counts
     counts = format_table(counts)
@@ -386,7 +382,7 @@ if __name__ == '__main__':
     st.caption('''Source: SBA Small Business Goaling Reports, FY09-FY22. A vendor is a unique DUNS or UEI that received a positive obligation in the fiscal year.\n
     Abbreviations: SDB - Small Disadvantaged Business, WOSB - Women-owned small business, HUBZone - Historically Underutilized Business Zone, SDVOSB - Service-disabled veteran-owned small business.\n
     This report consider transactions on the Small Business Goaling Report, after applying scorecard exclusions. Except for "All Vendors," the report considers only vendors that received a positive obligation in the given scorecard category (e.g., HUBZone vendors consider only vendors that received positive obligations in the HUBZone scorecard category).''')
-
+    cursor.close()
     
 #%%
 
