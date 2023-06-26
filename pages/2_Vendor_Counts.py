@@ -38,17 +38,7 @@ def get_data (query, params=None):
     return results
 
 def collist():
-    x = dict(cols = [ 'COALESCE (VENDOR_DUNS_NUMBER, VENDOR_UEI) VENDOR_ID',
-            'ADDRESS_STATE',
-            'TRY_TO_NUMBER(SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5)) VENDOR_ADDRESS_ZIP_CODE',
-            'TRY_TO_NUMBER(PRINCIPAL_NAICS_CODE) PRINCIPAL_NAICS_CODE',
-            'FUNDING_AGENCY_NAME',
-            'FUNDING_DEPARTMENT_NAME',
-            'PRODUCT_OR_SERVICE_CODE',
-            'TYPE_OF_SET_ASIDE',
-            'IDV_TYPE_OF_SET_ASIDE',
-            'EVALUATED_PREFERENCE',
-            'TRY_TO_NUMBER(FISCAL_YEAR) FY'],
+    x = dict(
     dolcols = ["SMALL_BUSINESS_DOLLARS",
             "SDB_DOLLARS",
             "WOSB_DOLLARS",
@@ -65,51 +55,10 @@ def collist():
             'OTHER_MINORITY_OWNED', #5
             'ALASKAN_NATIVE_CORPORATION',
             'NATIVE_HAWAIIAN_ORGANIZATION',],
-    tribal = "TO_BOOLEAN(CASE WHEN INDIAN_TRIBE = \'YES\' OR TRIBALLY_OWNED = \'YES\' OR AIOB_FLAG = \'YES\' THEN 1 ELSE 0 END) TRIBAL"
     )
     return x
-
-def shrink_table (tb):
-    #convert large numeric types to smaller types
-    type_dict = {'VENDOR_ADDRESS_ZIP_CODE':pa.uint32(),
-            'PRINCIPAL_NAICS_CODE':pa.uint32(),
-            'FY':pa.uint16()}
-    newsch = tb.schema
-    for x in type_dict:
-            newsch = newsch.set(newsch.get_field_index(x),
-            pa.field(x, type_dict[x]))
-    tb = tb.cast(newsch)
-
-    #convert columns with common entries to dictionaries
-    from pyarrow.compute import dictionary_encode
-
-    dict_cols = ['FUNDING_AGENCY_NAME',
-            'FUNDING_DEPARTMENT_NAME',
-            'PRODUCT_OR_SERVICE_CODE',
-            'TYPE_OF_SET_ASIDE',
-            'IDV_TYPE_OF_SET_ASIDE']
-    for x in dict_cols:
-            i = tb.schema.get_field_index(x)
-            if tb.schema.types[i] != pa.dictionary(pa.int32(), pa.utf8()):
-                    tb = tb.set_column(i,x,dictionary_encode(tb[x]))
-
-    return tb
-
-# @st.cache_data
-# def get_vendor_data ():
-#     cols = collist()
-#     boolflagcols = [f"TO_BOOLEAN(CASE WHEN {x} = 'YES' THEN 1 ELSE 0 END) {x}" for x in cols['flagcols']] 
-#     booldolcols = [f'TO_BOOLEAN(CASE WHEN {x} > 0 THEN 1 ELSE 0 END) {x}' for x in cols['dolcols']]
-#     q = f'''
-#             SELECT DISTINCT {', '.join(cols['cols'])}, {', '.join(booldolcols)}, {', '.join(boolflagcols)}, {cols['tribal']}
-#                     FROM SMALL_BUSINESS_GOALING
-#                     WHERE TOTAL_SB_ACT_ELIGIBLE_DOLLARS > 0
-#             '''
-#     tb = get_data (q)
-#     tb = shrink_table(tb)
-#     return tb
 #%%
-# get other tables needed
+# get needed tables
 
 @st.cache_data
 def get_DO_table ():
@@ -326,7 +275,7 @@ def counts_table (all_ct=True, **kwargs):
     if ('ADDRESS_STATE' in kwargs) and ('VENDOR_ADDRESS_ZIP_CODE' in kwargs):
         filter.append (f"(ADDRESS_STATE in (%(ADDRESS_STATE)s) OR SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) in (%(VENDOR_ADDRESS_ZIP_CODE)s))")
     elif 'VENDOR_ADDRESS_ZIP_CODE' in kwargs:
-        filter.append (f"SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) in (%(VENDOR_ADDRESS_ZIP_CODE)s))")
+        filter.append (f"SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) in (%(VENDOR_ADDRESS_ZIP_CODE)s)")
     elif 'ADDRESS_STATE' in kwargs:
         filter.append (f"ADDRESS_STATE in (%(ADDRESS_STATE)s)")
 
@@ -374,7 +323,7 @@ def counts_table (all_ct=True, **kwargs):
 
 if __name__ == '__main__':
     st.title("SBA Vendor Counts")
-    st.caption('This report shows the number of vendors that received a positive obligation in the Small Business Goaling Report, after applying scorecard exclusions. Except for Total Vendors, only small businesses are counted.')
+    st.caption('This report shows the number of vendors that received a positive Federal contracts obligation in a given fiscal year, according to the SBA Small Business Goaling Report. Except for Total Vendors, only small businesses are counted.')
     d={}
     d.update(address_state_vendor_address_zip_code())
     d.update(funding_department_name_agency_name())
@@ -391,7 +340,8 @@ if __name__ == '__main__':
         x=countdf.index,
         y=countdf['Small Business Vendors'],
         name='Small Business Vendors',
-        visible=True  # Make this line visible initially
+        visible=True ,
+        mode = 'lines'
     ))
 
     # Set visibility to 'legendonly' for all other lines
@@ -401,7 +351,9 @@ if __name__ == '__main__':
                 x=countdf.index,
                 y=countdf[column],
                 name=column,
-                visible='legendonly'
+                visible='legendonly',
+                mode = 'lines'
+
             ))
 
     # Update the layout
