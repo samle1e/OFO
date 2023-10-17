@@ -79,7 +79,7 @@ def get_PSC_names():
 @st.cache_data
 def dept_agency_choices():
     dept_agency = get_data("SELECT DISTINCT FUNDING_DEPARTMENT_NAME, FUNDING_AGENCY_NAME FROM SMALL_BUSINESS_GOALING")
-    dict = {key: list(group['FUNDING_AGENCY_NAME']) for key, group in dept_agency.groupby('FUNDING_DEPARTMENT_NAME')}
+    dict = {key: list(group['FUNDING_AGENCY_NAME']) for key, group in dept_agency.group_by('FUNDING_DEPARTMENT_NAME')}
     return dict
 
 @st.cache_data
@@ -196,7 +196,7 @@ def state_zip ():
     else:
         zip = []
 
-    return {'ADDRESS_STATE': [x.upper () for x in state], 'VENDOR_ADDRESS_ZIP_CODE': zip}
+    return {'VENDOR_ADDRESS_STATE_NAME': [x.upper() for x in state], 'VENDOR_ADDRESS_ZIP_CODE': zip}
 
 def get_NAICS ():
     naicslst = naics_list ()
@@ -256,7 +256,6 @@ def dollars_table (**kwargs):
             'PRODUCT_OR_SERVICE_DESCRIPTION',
             'PRINCIPAL_NAICS_CODE',
             'PRINCIPAL_NAICS_DESCRIPTION',
-            'ADDRESS_STATE'
         ]
     
     dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
@@ -331,7 +330,7 @@ def dollars_display(dollars_tb):
                     .sort_by([(f'{dollars_dict_rev[metric]}_sum', 'descending')])
                     ).to_pandas()
                     .rename({f'{k}_sum':v for k,v in dollars_dict.items()}, axis=1)
-                    .groupby('UEI_OR_DUNS', sort=True)
+                    .group_by('UEI_OR_DUNS', sort=True)
                     .agg({**{'VENDOR_NAME': 'first'},**{x:'sum' for x in list(dollars_dict.values())}})
                     .sort_values(metric, ascending=False)
                     .head(100)
@@ -379,7 +378,7 @@ def dollars_display(dollars_tb):
                         ).to_pandas()
                         .pipe(lambda _df:_df.assign(FIPS = _df.VENDOR_ADDRESS_ZIP_CODE.map(ZIP_FIPS)))
                         .rename({f'{dollars_dict_rev[metric]}_sum':metric}, axis=1)
-                        .groupby(["FIPS"],as_index=False)[metric].sum()
+                        .group_by(["FIPS"],as_index=False)[metric].sum()
                         )
     
     #get county names
