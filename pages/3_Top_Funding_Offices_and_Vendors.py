@@ -1,286 +1,264 @@
 #%%
-import polars as pl
 import pandas as pd
 import streamlit as st
 import plotly.express as px
 import pyarrow.dataset as ds
-import os
+from snowflake.connector import connect
+import requests
 import pyarrow as pa
 import json
+
+st.set_page_config(
+    page_title="SBA Vendor Count",
+    page_icon="https://www.sba.gov/brand/assets/sba/img/pages/logo/logo.svg",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True) 
+con = connect(**st.secrets.snowflake_credentials)
+cursor = con.cursor()
 #%%
-def get_years_desktop():
-    datalake="C:\\Users\\SQLe\\U.S. Small Business Administration\\Office of Policy Planning and Liaison (OPPL) - Data Lake\\"
-    min_year = int(os.listdir(f"{datalake}/SBGR_parquet")[0].replace(
-        "FY=",""))
-    max_year = int(os.listdir(f"{datalake}/SBGR_parquet")[-1].replace(
-        "FY=",""))
-    return min_year, max_year
-#%%
-def get_data_desktop(year):
-    datalake="C:\\Users\\SQLe\\U.S. Small Business Administration\\Office of Policy Planning and Liaison (OPPL) - Data Lake\\"
-    arrowds=ds.dataset(f"{datalake}/SBGR_parquet/FY={year}",format="parquet")
-    plds=pl.scan_ds(arrowds)
-    return plds
-#%%
-def get_data_dashboard(year):
-    lazydf=pl.scan_parquet(f"Top_Offices_{year}.parquet")
-    return lazydf
+@st.cache_resource
+def get_data (query, params=None):
+    if params:
+        cursor.execute(query, params)
+    else: 
+        cursor.execute(query)
+    results = cursor.fetch_pandas_all()
+    return results
 
 #%%
-def export_data(year):
-    datalake="C:\\Users\\SQLe\\U.S. Small Business Administration\\Office of Policy Planning and Liaison (OPPL) - Data Lake\\"
-    arrowds=ds.dataset(f"{datalake}/SBGR_parquet/FY={year}",format="parquet")
-    plds=pl.scan_ds(arrowds)
-    collist=["ADDRESS_STATE",
-            "VENDOR_ADDRESS_ZIP_CODE",
-            "PRINCIPAL_NAICS_CODE",
-            "PRODUCT_OR_SERVICE_CODE",
-            'PRODUCT_OR_SERVICE_DESCRIPTION',
-            "FUNDING_DEPARTMENT_NAME",
-            "FUNDING_AGENCY_NAME",
-            "FUNDING_OFFICE_NAME",]
-    dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
-            "SMALL_BUSINESS_DOLLARS",
-            "SDB_DOLLARS",
-            "WOSB_DOLLARS",
-            "CER_HUBZONE_SB_DOLLARS",
-            "SRDVOB_DOLLARS",
-            "EIGHT_A_PROCEDURE_DOLLARS",]
-    if year<2022:
-        vendor_cols=["VENDOR_DUNS_NUMBER","VENDOR_NAME"]
+#Get needed tables
+
+@st.cache_data
+def naics_list ():
+    '''returns Pandas Series of NAICS names'''
+    links = ['https://www.census.gov/naics/reference_files_tools/2007/naics07.xls',
+             'https://www.census.gov/naics/2012NAICS/2-digit_2012_Codes.xls',
+             'https://www.census.gov/naics/2017NAICS/2-6%20digit_2017_Codes.xlsx']
+    
+    NAICS_sr = (pd.concat([(pd.read_excel(link)
+               .drop('Seq. No.', axis = 1)
+               .iloc[:,[0,1]]
+               .set_axis(['Code','Title'], axis=1)
+               .pipe(lambda _df: _df.assign(Code = _df.Code.astype(str)))
+               .set_index('Code')
+                )
+                  for link in links], axis=1)
+                 .pipe(lambda _df: _df.assign(industry = _df.apply(
+                    lambda row: next((val for val in row if pd.notnull(val)), pd.NA), axis=1)))
+                 .pipe(lambda _df:_df.drop(_df.columns[0:1],axis=1))
+                 .dropna(axis=0)
+                 .squeeze()
+                )
+    return NAICS_sr
+
+@st.cache_data
+def get_PSC_names(): 
+    '''returns Pandas Series of PSC names'''
+    PSClink = "https://www.acquisition.gov/sites/default/files/manual/PSC%20April%202022.xlsx"
+    PSCnames=(pd.read_excel(PSClink)
+            .drop_duplicates("PSC CODE",keep="first")
+            .assign(PSC_CODE=lambda _df: _df["PSC CODE"].astype(str))
+            .drop('PSC CODE', axis=1)
+            .set_index("PSC_CODE")
+            .filter(regex="NAME")
+            .pipe(lambda _df:_df.assign(Title = _df.iloc[:,1].combine_first(_df.iloc[:,0])))
+            .sort_index()
+            .loc[:,"Title"]
+            .squeeze())
+    return PSCnames
+
+@st.cache_data
+def dept_agency_choices():
+    dept_agency = get_data("SELECT DISTINCT FUNDING_DEPARTMENT_NAME, FUNDING_AGENCY_NAME FROM SMALL_BUSINESS_GOALING")
+    dict = {key: list(group['FUNDING_AGENCY_NAME']) for key, group in dept_agency.groupby('FUNDING_DEPARTMENT_NAME')}
+    return dict
+
+@st.cache_data
+def state_county_CD_zip():
+    token = st.secrets.HUD.HUDkey
+
+    #Get Counties from HUD
+    state_county_zip = get_data("SELECT ZIP_CODE, FIPS, STATE_FIPS_CODE, STATE_NAME, STATE, COUNTY FROM SBA_DO_ZIP")
+
+    #Get Congressional Districts from HUD
+    url = "https://www.huduser.gov/hudapi/public/usps?type=5&query=all"
+    headers = {"Authorization": "Bearer {0}".format(token)}
+    response = requests.get(url, headers = headers)
+    
+    zip_data = (pd.DataFrame(response.json()["data"]["results"])	
+            .sort_values('bus_ratio',ascending=False)
+            .drop_duplicates(subset="zip",keep="first")
+            .assign(CD=lambda _df:_df.geoid.astype(str).str.slice(2,4))
+            .set_index('zip')
+            .join(state_county_zip.drop_duplicates().set_index('ZIP_CODE')
+                ,how="outer")
+            .fillna(method='ffill')
+            .filter(['CD', 'FIPS' ,'STATE_FIPS_CODE', 'STATE_NAME', 'STATE', 'COUNTY'])
+        )
+    return zip_data
+
+@st.cache_data
+def years_choices():
+    years = get_data("SELECT DISTINCT FISCAL_YEAR FROM SMALL_BUSINESS_GOALING")
+    years = years.squeeze().astype(int).sort_values().tolist()
+    return years
+
+#%%
+def reset_session_state ():
+    for x in st.session_state:
+        del st.session_state[x]
+    st.experimental_rerun()
+
+#%%
+def get_year():
+    years = years_choices()
+    if 'year' not in st.session_state:
+        st.session_state.year=years[-1]
+
+    year = st.sidebar.selectbox(label='Fiscal Year', options = years,
+                                key='year')
+    return {'FISCAL_YEAR': year}
+
+def department():
+    da_choices = dept_agency_choices()
+    choices = sorted(list(da_choices.keys()))
+    
+    if 'dept' not in st.session_state:
+        st.session_state.dept=[]
+    if 'agency_name' not in st.session_state:
+        st.session_state.agency_name=[]
+
+    funding_department_name = st.sidebar.multiselect(label="Department"
+                                        , options=choices, key = 'dept')
+    
+    agency_choices = []
+    if len(funding_department_name) == 1:
+        agency_choices = sorted(da_choices[funding_department_name[0]])
+    agency_name = st.sidebar.multiselect(label="Agency", options = agency_choices, key = 'agency_name'
+                                         , disabled = (len(funding_department_name) != 1))   
+    return {'FUNDING_DEPARTMENT_NAME': funding_department_name, 'FUNDING_AGENCY_NAME': agency_name}
+
+def state_zip ():
+    #set session states
+    if 'state' not in st.session_state:
+        st.session_state.state=[]
+    if 'counties' not in st.session_state:
+        st.session_state.counties=[]
+    if 'CDs' not in st.session_state:
+        st.session_state.CDs=[]
+
+    #state selection
+    state_df = state_county_CD_zip()
+    state = st.sidebar.multiselect(label='State (pick multi)'
+                                   , options = state_df.STATE_NAME.drop_duplicates().sort_values().to_list(),
+                                   key = 'state')
+ 
+    #county and CD selection
+    counties = []
+    CDs = []
+
+    if len(state)==1:
+        county_choice = state_df[state_df['STATE_NAME']==state[0]].COUNTY.drop_duplicates().sort_values().to_list()
+        CD_choice = [x for x in       
+                        state_df[state_df['STATE_NAME']==state[0]].CD.drop_duplicates().sort_values().to_list()
+                    if '00' not in x]
     else:
-        vendor_cols=[ "VENDOR_UEI","UEI_NAME",]
+        county_choice = []
+        CD_choice = []
 
-    export_data=plds.select(pl.col(collist+vendor_cols+dolcols)
-                     ).with_columns(pl.col("VENDOR_ADDRESS_ZIP_CODE"
-                     ).str.slice(0,5).alias("VENDOR_ADDRESS_ZIP_CODE")
-                     )
-                            
-    consol_data=export_data.groupby(collist+vendor_cols
-                            ).agg(pl.col(dolcols).sum()
-                            ).collect()
-    consol_data.write_parquet(f"Top_Offices_{year}.parquet",row_group_size=1000000,use_pyarrow=True,compression="zstd",compression_level=22)
-#export_data(2022)
-#export_data(2021)
-#export_data(2020)
+    counties = st.sidebar.multiselect(label='Counties (pick multi)',
+                                   options = county_choice,
+                                   key = 'counties',
+                                   disabled = ((len(state) != 1) | (len(CDs)>0))
+                                   )   
 
-#%%
-def get_county_mapping_desktop():  
+    CDs = st.sidebar.multiselect(label='Congressional Districts (pick multi)'
+                                   , options = CD_choice,
+                                   key = 'CDs',
+                                   disabled = ((len(state) != 1) | (len(counties)>0))
+                                   )  
 
-    import requests
-    datalake="C:\\Users\\SQLe\\U.S. Small Business Administration\\Office of Policy Planning and Liaison (OPPL) - Data Lake\\"
+    #convert to ZIP codes
+    if ((len(CDs) > 0) | (len(counties) > 0)):
+        if (len(CDs) > 0):
+            zip = state_df[(state_df['STATE_NAME']==state[0]) & (state_df['CD'].isin(CDs))].index.to_list()
+        else:
+            zip = state_df[(state_df['STATE_NAME']==state[0]) & (state_df['COUNTY'].isin(counties))].index.to_list()
+    else:
+        zip = []
 
-    def get_HUD (url, element):
-        token = open(f"{datalake}/Credentials/HUDuser.txt","r").read()
-        headers = {"Authorization": "Bearer {0}".format(token)}
-        response = requests.get(url, headers = headers)
-        zip_data = pd.DataFrame(response.json()["data"]["results"])	
-        zip_data = zip_data.rename(columns={"geoid":element}).set_index("zip")
-        return zip_data
+    return {'ADDRESS_STATE': [x.upper () for x in state], 'VENDOR_ADDRESS_ZIP_CODE': zip}
 
-    zip_FIPS = get_HUD("https://www.huduser.gov/hudapi/public/usps?type=2&query=all","FIPS")
-    zip_CD = get_HUD("https://www.huduser.gov/hudapi/public/usps?type=5&query=all","CD")
-
-    zip_FIPS=zip_FIPS.join(zip_CD,rsuffix="_CD").reset_index()
-
-    FIPS_to_name=pd.read_csv("https://www.ncei.noaa.gov/erddap/convert/fipscounty.csv")
-
-    zip_FIPS.set_index("FIPS",inplace=True)
-    FIPS_to_name["FIPS"]=FIPS_to_name["FIPS"].astype(str).str.zfill(5)
-    FIPS_to_name.set_index("FIPS",inplace=True)
-
-    ZIP_to_county=zip_FIPS.join(FIPS_to_name,how="left",rsuffix="_R")
-
-    ZIP_to_county["County"]=ZIP_to_county["Name"].str.partition(", ")[2]
-
-    state_names=pd.read_csv("https://raw.githubusercontent.com/jasonong/List-of-US-States/master/states.csv")
-    state_names=state_names.set_index("Abbreviation").squeeze().to_dict()
-    terr_dict={"PR":"Puerto Rico","GU":"Guam"
-                                    ,"AS":"American Samoa"	
-                                    ,"MP":"Northern Mariana Is."
-                                    ,"VI":"Virgin Islands"}
-    state_names.update(terr_dict)
-
-    ZIP_to_county["State"]=ZIP_to_county["state"].map(state_names)
-
-    return ZIP_to_county.sort_values(by=["zip","bus_ratio"],ascending=[True,False]).reset_index()
-#%%
-# ZIP_to_county=get_county_mapping_desktop()
-# ZIP_to_county.to_parquet("../ZIP_to_FIPS_Name_20230327.parquet")
-#%%
-def get_county_mapping():
-    return pd.read_parquet("ZIP_to_FIPS_Name_20230327.parquet")
+def get_NAICS ():
+    naicslst = naics_list ()
+    options = [f"{index}: {value}" for index, value in naicslst.items()]
+    if 'naics' not in st.session_state:
+        st.session_state.naics=[]
+    NAICS_pick = st.sidebar.multiselect (label="NAICS (pick multi)", options = options
+                                         , key = 'naics')
     
-ZIP_to_county=get_county_mapping()
+    NAICS_pick_long = [m 
+        for l in NAICS_pick 
+        for m in (list(range(
+            int(l.split(':')[0].split('-')[0]), 
+            int(l.split(':')[0].split('-')[1])+1)) 
+        if '-' in l 
+        else [int(l.split(':')[0])])
+        ]
 
-#%%
-def NAICS_PSC_names():
-#get three sets of NAICS names
-    NAICSnames=[None]*3
-    NAICSnames[0]=pd.read_excel("https://www.census.gov/naics/2012NAICS/2-digit_2012_Codes.xls")
-    NAICSnames[1]=pd.read_excel("https://www.census.gov/naics/2017NAICS/2-6%20digit_2017_Codes.xlsx")
-    NAICSnames[2]=pd.read_excel("https://www.census.gov/naics/2022NAICS/2-6%20digit_2022_Codes.xlsx")
-
-    for i in range(0,3):
-        NAICSnames[i]=NAICSnames[i].filter(regex="Code|Title")
-        NAICSnames[i]=NAICSnames[i].set_index(NAICSnames[i].columns[0])
-
-    combined=NAICSnames[0].join([NAICSnames[1],NAICSnames[2]],how="outer")
-    combined=combined.loc[combined.index.dropna()]
-    combined.index=combined.index.astype("str")
-    combined["Title"]=combined.iloc[:,0].combine_first(combined.iloc[:,1]
-                                        ).combine_first(combined.iloc[:,2])
-    NAICS_names=combined.sort_index().loc[:,"Title"].squeeze().to_dict()
-
-    PSCnames=pd.read_excel(
-        "https://www.acquisition.gov/sites/default/files/manual/PSC%20April%202022.xlsx")
-
-    PSC_names=PSCnames.drop_duplicates("PSC CODE",keep="first").set_index(
-        "PSC CODE").filter(regex="NAME")
-    PSC_names.index=PSC_names.index.astype("str")
-    PSC_names["Title"]=PSC_names.iloc[:,1].combine_first(PSC_names.iloc[:,0])
-    PSC_names=PSC_names.sort_index().loc[:,"Title"].squeeze().to_dict()
-
-    return NAICS_names,PSC_names
-#%%
-def get_Cong_dist_list():
-    Cong_dist_list=pd.read_csv(
-        "https://theunitedstates.io/congress-legislators/legislators-current.csv"
-        ,usecols=["state","district"],converters=({"district":str}))
-    Cong_dist_list=Cong_dist_list.loc[Cong_dist_list['district'].str.len()>0]
-    Cong_dist_list['district']=Cong_dist_list['district'].astype(str).str.zfill(2)
-    Cong_dist_list.sort_values(["state","district"],inplace=True)
-    return Cong_dist_list
-#%%
-def get_choices_desktop():
-    min_year, max_year=get_years_desktop()
-    year_select=[min_year, max_year]
-
-    state_select=ZIP_to_county["State"].drop_duplicates().sort_values().to_list()
-
-    state_abbr={}
-    for x in state_select:
-        abbr=ZIP_to_county[ZIP_to_county["State"]==x]["state"].iloc[0]
-        state_abbr.update({abbr:x})
-
-    county_select={}
-    for x in state_abbr:
-        county_list=ZIP_to_county.loc[ZIP_to_county['state']==x][
-            "County"].drop_duplicates().sort_values().to_list()
-        county_select.update({x:county_list})
-
-    CD_select={}
-    for x in state_abbr.keys():
-        CD=ZIP_to_county[(ZIP_to_county["state"]==x) &
-                         (ZIP_to_county["bus_ratio_CD"]>0.5)][
-            "CD"].drop_duplicates().sort_values().to_list()
-        CD_select.update({x:CD})
-
-    NAICS_select,PSC_select = NAICS_PSC_names()
-
-    department_select=['AGENCY FOR INTERNATIONAL DEVELOPMENT', 'AGRICULTURE, DEPARTMENT OF', 'COMMERCE, DEPARTMENT OF'
-            ,'DEPT OF DEFENSE', 'EDUCATION, DEPARTMENT OF', 'ENERGY, DEPARTMENT OF'
-            ,'ENVIRONMENTAL PROTECTION AGENCY', 'GENERAL SERVICES ADMINISTRATION', 'HEALTH AND HUMAN SERVICES, DEPARTMENT OF'
-            ,'HOMELAND SECURITY, DEPARTMENT OF', 'HOUSING AND URBAN DEVELOPMENT, DEPARTMENT OF', 'INTERIOR, DEPARTMENT OF THE'
-            ,'JUSTICE, DEPARTMENT OF', 'LABOR, DEPARTMENT OF', 'NATIONAL AERONAUTICS AND SPACE ADMINISTRATION'
-            ,'NATIONAL SCIENCE FOUNDATION', 'NUCLEAR REGULATORY COMMISSION', 'OFFICE OF PERSONNEL MANAGEMENT'
-            ,'SMALL BUSINESS ADMINISTRATION', 'SOCIAL SECURITY ADMINISTRATION', 'STATE, DEPARTMENT OF'
-            ,'TRANSPORTATION, DEPARTMENT OF', 'TREASURY, DEPARTMENT OF THE', 'VETERANS AFFAIRS, DEPARTMENT OF']
-
-    choices=[year_select, state_select, state_abbr, county_select,CD_select
-            ,NAICS_select, PSC_select, department_select]
+    NAICS6_pick = [int(num) for num in naicslst.index.to_list() 
+                   if len(num) == 6 and 
+                   any(num.startswith(str(prefix)) for prefix in NAICS_pick_long)]
+    return {'PRINCIPAL_NAICS_CODE': NAICS6_pick}
     
-    return choices
+def get_PSC ():
+    PSC_list = get_PSC_names()
+    options = [f"{index}: {value}" for index, value in PSC_list.items()]
+    if 'psc' not in st.session_state:
+        st.session_state.psc=[]
+    psc_pick = st.sidebar.multiselect (label="PSCs (pick multi)", options = options, key = 'psc')
+    psc_pick = [x.split(':')[0] for x in psc_pick]
+
+    psc_pick_long = [pick for pick in PSC_list.index.to_list() 
+                   if len(pick) == 4 and 
+                   any(pick.startswith(prefix) for prefix in psc_pick)]
+    return {'PRODUCT_OR_SERVICE_CODE': psc_pick_long}    
 #%%
-#choices=get_choices_desktop()
-#json.dump(choices,open('choices_FOdash.json', 'w'))
-#%%
-def get_choices():
-    return json.load(open ('choices_FOdash.json', 'r'))
-#%%
-def user_input():
-    year_select, state_select, state_abbr, county_select, CD_select, NAICS_select, PSC_select, department_select = get_choices()
-    inv_state_abbr={v: k for k, v in state_abbr.items()}
+def dollars_table (**kwargs):
+    '''Returns a pyarrow table with consolidated and filtered results from a single FY'''
+    filter = []
 
-    year=st.sidebar.slider(label="Fiscal Year",min_value=2020 #year_select[0] #uploaded data only goes back to 2020
-                        ,max_value=year_select[1]-1,value=year_select[1]-1)
-    state=st.sidebar.multiselect(label="States (pick multi)",options=state_select)
+    if ('VENDOR_ADDRESS_ZIP_CODE' in kwargs):
+        filter.append (f"SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) in (%(VENDOR_ADDRESS_ZIP_CODE)s))")
+    
+    for x in kwargs:
+        if x not in ['VENDOR_ADDRESS_ZIP_CODE', 'FISCAL_YEAR']:
+            filter.append(f"{x} in (%({x})s)")
 
-    county_choice=[]
-    CD_choice=[]
+    filter_all = ' AND '.join(filter)
 
-    if len(state)>0:
-        state_abbr_select=[v for k,v in inv_state_abbr.items() if k in state]    
-
-        county_list=[(i,k) for k,v in county_select.items() for i in v if k in state_abbr_select]
-        county_choice=[f"{county}, {state}" for (county, state) in county_list]
-
-        CD_list=[(i,k) for k,v in CD_select.items() for i in v if k in state_abbr_select]
-        CD_choice=[f"{state} {CD[2:4]}" for (CD, state) in CD_list]
-
-    counties=st.sidebar.multiselect(label="Counties (pick multi)",options=county_choice,disabled=(len(state)==0))
-
-    CDs=st.sidebar.multiselect(label="Congressional Districts (pick multi)",options=CD_choice
-                            ,disabled=(len(state)==0))
-
-    NAICS_pick=st.sidebar.multiselect(label="NAICS (pick multi)"
-                                ,options=[f"{k}: {v}" for k,v in NAICS_select.items()])
-    NAICS_pick_short=[x.split(": ")[0] for x in NAICS_pick]
-
-    #get all the six-digit NAICS picked
-    NAICS=[x for x in NAICS_pick_short if len(x)==6]
-
-    for i in NAICS_pick_short:
-        if len(i)<6:
-            NAICS.extend([x for x in NAICS_select.keys() if (len(x)==6) & (x.startswith(i))])
-
-    PSC_pick=st.sidebar.multiselect(label="Product Service Codes (pick multi)"
-                            ,options=[f"{k}: {v}" for k,v in PSC_select.items()])
-    PSC_pick_short=[x.split(": ")[0] for x in PSC_pick]
-
-    PSC = [x for x in PSC_pick_short if len(x)==4]
-
-    for i in PSC_pick_short:
-        if len(i)<4:
-            PSC.extend([x for x in PSC_select.keys() if (len(x)==4) & (x.startswith(i))])
-    return year, state, counties, CDs, NAICS, PSC
-
-#%%
-def filter_data (year, state, counties, CDs, NAICS, PSC):
-    year_select, state_select, state_abbr, county_select, CD_select, NAICS_select, PSC_select, department_select = get_choices()
-
-    #filter_data=get_data_desktop(year)
-    filter_data=get_data_dashboard(year)
-    if state:
-        state_list=[abbr for abbr,name in state_abbr.items() if name in state]
-        filter_data=filter_data.filter(pl.col("ADDRESS_STATE").is_in(state_list))
-    if counties:
-        county_list=[", ".join([x.split(", ")[1],x.split(", ")[0]]) for x in counties]
-        zip_county_list=ZIP_to_county.loc[(ZIP_to_county["Name"].isin(county_list)) & 
-                                        (ZIP_to_county["bus_ratio"]>0.3), "zip"].to_list()
-        filter_data=filter_data.filter(pl.col("VENDOR_ADDRESS_ZIP_CODE").str.slice(0,5).is_in(zip_county_list))
-    if CDs:
-        zip_cd_list=[]
-        for x in CDs:
-            state_CD=(x[0:2],x[3:5])
-            add_list=ZIP_to_county.loc[(ZIP_to_county["state"]==state_CD[0]) & 
-                        (ZIP_to_county["CD"].str.slice(start=2)==state_CD[1]), "zip"].to_list()
-            zip_cd_list.extend(add_list)
-        filter_data=filter_data.filter(pl.col("VENDOR_ADDRESS_ZIP_CODE").str.slice(0,5).is_in(zip_cd_list))
-    if NAICS:
-        filter_data=filter_data.filter(pl.col("PRINCIPAL_NAICS_CODE").is_in(NAICS))
-    if PSC:
-        filter_data=filter_data.filter(pl.col("PRODUCT_OR_SERVICE_CODE").is_in(PSC))
-
-    return filter_data
-
-#%%
-def top_offices(filtered_data):
-    officecols=[  "FUNDING_DEPARTMENT_NAME",
+    if filter_all == '':
+        filter_all = '1=1'
+   
+    groupcols = ["FUNDING_DEPARTMENT_NAME",
             "FUNDING_AGENCY_NAME",
             "FUNDING_OFFICE_NAME",
+            'PRODUCT_OR_SERVICE_CODE',
+            'PRODUCT_OR_SERVICE_DESCRIPTION',
+            'PRINCIPAL_NAICS_CODE',
+            'PRINCIPAL_NAICS_DESCRIPTION',
+            'ADDRESS_STATE'
         ]
-    global dolcols
+    
     dolcols=["TOTAL_SB_ACT_ELIGIBLE_DOLLARS",
             "SMALL_BUSINESS_DOLLARS",
             "SDB_DOLLARS",
@@ -289,87 +267,135 @@ def top_offices(filtered_data):
             "SRDVOB_DOLLARS",
             "EIGHT_A_PROCEDURE_DOLLARS"]
 
-    top_offices=filtered_data.select(officecols+dolcols).groupby(
-        officecols).sum().sort("TOTAL_SB_ACT_ELIGIBLE_DOLLARS",descending=True).collect().to_pandas()
-    top_offices["FUNDING_OFFICE_NAME"]=top_offices["FUNDING_OFFICE_NAME"].fillna(top_offices["FUNDING_AGENCY_NAME"])
-    return top_offices
-
-#%%
-def top_vendors(filtered_data,year):
-    vendor_id={"VENDOR_UEI":"VENDOR_ID"
-                ,"UEI_NAME":"VENDOR_NAME"
-                ,"VENDOR_DUNS_NUMBER":"VENDOR_ID"
-                ,"VENDOR_NAME":"VENDOR_NAME"}
-
-    if year<2022:
-        vendor_cols=list(vendor_id.keys())[2:]
-    else:
-        vendor_cols=list(vendor_id.keys())[:2]
-    top_vendors=filtered_data.select(vendor_cols+dolcols).groupby(
-        vendor_cols).sum().sort("TOTAL_SB_ACT_ELIGIBLE_DOLLARS",descending=True).collect().to_pandas()
-    return top_vendors
-#%%
-def top_products(filtered_data):
-    productcols=['PRODUCT_OR_SERVICE_CODE',
-                 'PRODUCT_OR_SERVICE_DESCRIPTION'
-        ]
-
-    top_products=filtered_data.select(productcols+dolcols).groupby(
-        productcols).sum().sort("TOTAL_SB_ACT_ELIGIBLE_DOLLARS",descending=True).collect().to_pandas()
-    return top_products
-#%%
-def format_df (df):
-    dolcols=list(dollars_dict.values())
+    dollars = cursor.execute(f'''
+            SELECT 
+                    {", ".join(groupcols)},
+                    SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) VENDOR_ADDRESS_ZIP_CODE,
+                    COALESCE (VENDOR_UEI, VENDOR_DUNS_NUMBER) UEI_OR_DUNS,
+                    COALESCE (UEI_NAME, VENDOR_NAME) VENDOR_NAME,
+                    {", ".join([f'sum({col}) {col}' for col in dolcols])}
+                FROM SMALL_BUSINESS_GOALING
+                WHERE FISCAL_YEAR = (%(FISCAL_YEAR)s) AND TOTAL_SB_ACT_ELIGIBLE_DOLLARS > 0 AND {filter_all}
+                GROUP BY SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5),
+                    COALESCE (VENDOR_UEI, VENDOR_DUNS_NUMBER),
+                    COALESCE (UEI_NAME, VENDOR_NAME),
+                    {", ".join(groupcols)}
+            ''', kwargs).fetch_arrow_all()
     
-    #rename columns
-    df=df.rename(columns=dollars_dict)
-    df.columns=df.columns.str.replace("_"," ")
+    return dollars
 
-    maxindex=0
-    for x in dolcols:
-        max=df[df[x]>0].sort_values(x,ascending=False).head(100).last_valid_index()
-        try:
-            if max>maxindex:
-                maxindex=max
-        except:pass
-    df=df.iloc[:maxindex]
-    df[dolcols]=df[dolcols].round(0)
-    df.index = df.index + 1
-
-    return df
-#    indexes=
 #%%
-def show_county_graph(filtered_data,metric):
-    rev_dollars_dict= {v: k for k, v in dollars_dict.items()}
-    metricd=rev_dollars_dict[metric]
+def dollars_display(dollars_tb):
+    '''Displays the dollars table, sorted by metrics provided by the user. Allows for download.'''
+    dollars_dict={
+        "TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"Total Dollars",
+        "SMALL_BUSINESS_DOLLARS":"Small Business Dollars",
+        "SDB_DOLLARS":"SDB Dollars",
+        "WOSB_DOLLARS":"WOSB Dollars",
+        "CER_HUBZONE_SB_DOLLARS":"HUBZone Dollars",
+        "SRDVOB_DOLLARS":"SDVOSB Dollars",
+        "EIGHT_A_PROCEDURE_DOLLARS":"8(a) Dollars",
+    }
+    dollars_dict_rev = {v:k for k,v in dollars_dict.items()}
 
-    zip_totals=filtered_data.with_columns(pl.col("VENDOR_ADDRESS_ZIP_CODE").str.slice(0,5).alias("zip"),
-                                          pl.col(metricd).alias(metric)
-                                          ).groupby("zip"
-                                          ).agg(pl.col(metric).sum()
-                                          ).collect().to_pandas()
-    ZIP_to_county_f=ZIP_to_county[ZIP_to_county["zip"].isin(zip_totals["zip"])].drop_duplicates("zip",keep="first")
-    ZIP_FIPS=dict(zip(ZIP_to_county_f["zip"],ZIP_to_county_f["FIPS"]))
-    zip_totals["FIPS"]=zip_totals["zip"].map(ZIP_FIPS)
-    zip_totals=zip_totals.groupby(["FIPS"],as_index=False)[metric].sum()
+    metric=st.radio("Select metric to graph",options=list(dollars_dict.values()),index=1)
+    st.caption ("8(a) dollars are dollars spent on 8(a) contracts and are a subset of SDB Dollars. SDB Dollars includes 8(a) dollars and other awards to SDBs.")
 
+    #Funding Offices
+    st.header("Top Funding Offices")
+    gb_cols = ['FUNDING_OFFICE_NAME', 'FUNDING_AGENCY_NAME', 'FUNDING_DEPARTMENT_NAME']
+    top_offices = ((dollars_tb
+                   .group_by(gb_cols)
+                   .aggregate([(x, 'sum') for x in list(dollars_dict.keys())])
+                   .sort_by([(f'{dollars_dict_rev[metric]}_sum', 'descending')])
+                   .slice(length=100)
+                  ).to_pandas()
+                  .rename({f'{k}_sum':v for k,v in dollars_dict.items()}, axis=1)
+                  .loc[:,gb_cols + list(dollars_dict.values())]
+                  .pipe(lambda _df:_df.assign(FUNDING_OFFICE_NAME = _df.FUNDING_OFFICE_NAME.fillna(_df.FUNDING_AGENCY_NAME)))
+                  .rename({x:x.replace('_',' ').title() for x in gb_cols}, axis=1)
+                  .round(0)
+                  )
+
+    fig_offices = px.bar(top_offices.sort_values(metric, ascending=False).head(10).sort_values(metric)
+         , x=metric, y="Funding Office Name", orientation='h')
+    st.plotly_chart(fig_offices)
+    st.dataframe(top_offices,use_container_width=True, hide_index=True)
+    st.download_button('Download this table',top_offices.to_csv(), 'top_offices.csv')
+
+    #Top Vendors
+    st.header("Top Vendors")
+    top_vendors = ((dollars_tb
+                    .group_by(['UEI_OR_DUNS', 'VENDOR_NAME'])
+                    .aggregate([(x, 'sum') for x in list(dollars_dict.keys())])
+                    .sort_by([(f'{dollars_dict_rev[metric]}_sum', 'descending')])
+                    ).to_pandas()
+                    .rename({f'{k}_sum':v for k,v in dollars_dict.items()}, axis=1)
+                    .groupby('UEI_OR_DUNS', sort=True)
+                    .agg({**{'VENDOR_NAME': 'first'},**{x:'sum' for x in list(dollars_dict.values())}})
+                    .sort_values(metric, ascending=False)
+                    .head(100)
+                    .reset_index()
+                    .round(0)
+    )
+    
+    fig_vendors = px.bar(top_vendors.sort_values(metric, ascending=False).head(10).sort_values(metric)
+         , x=metric, y=top_vendors.columns[1], orientation='h',labels={top_vendors.columns[1]:"Vendor Name"})
+    st.plotly_chart(fig_vendors)
+    st.dataframe(top_vendors,use_container_width=True, hide_index=True)
+    st.download_button('Download this table',top_vendors.to_csv(), 'top_vendors.csv')
+
+    
+    #Top NAICS and PSCs
+    for x in ('PRINCIPAL_NAICS_CODE', 'PRODUCT_OR_SERVICE_CODE'):
+        st.header (f'Top Industries by {x.replace("_"," ").title().replace("Naics","NAICS")}')
+
+        top_industries = ((dollars_tb
+                        .group_by([x, x.replace('CODE', 'DESCRIPTION')])
+                        .aggregate([(x, 'sum') for x in list(dollars_dict.keys())])
+                        .sort_by([(f'{dollars_dict_rev[metric]}_sum', 'descending')])
+                        .slice(length=100)
+                        ).to_pandas()
+                        .rename({f'{k}_sum':v for k,v in dollars_dict.items()}, axis=1)
+                        .loc[:,[x, x.replace('CODE', 'DESCRIPTION')] + list(dollars_dict.values())]
+                        .rename({y:y.replace('_',' ').title() for y in gb_cols}, axis=1)
+                        .round(0)
+                        )
+
+        fig_industries = px.bar(top_industries.head(10).sort_values(metric)
+            , x=metric, y=x.replace('CODE', 'DESCRIPTION'), orientation='h',
+            labels={x.replace('CODE', 'DESCRIPTION'):"Industry"},
+           )
+        st.plotly_chart(fig_industries)
+        st.dataframe(top_industries,use_container_width=True, hide_index=True)
+        st.download_button('Download this table',top_industries.to_csv(), f'top_{x}.csv')
+
+    # Show_county_graph
+    ZIP_FIPS = state_county_CD_zip().FIPS.to_dict()
+
+    fips_totals=((dollars_tb
+                        .group_by('VENDOR_ADDRESS_ZIP_CODE')
+                        .aggregate([(dollars_dict_rev[metric], 'sum')])
+                        ).to_pandas()
+                        .pipe(lambda _df:_df.assign(FIPS = _df.VENDOR_ADDRESS_ZIP_CODE.map(ZIP_FIPS)))
+                        .rename({f'{dollars_dict_rev[metric]}_sum':metric}, axis=1)
+                        .groupby(["FIPS"],as_index=False)[metric].sum()
+                        )
+    
     #get county names
-    ZIP_county=dict(zip(ZIP_to_county_f["FIPS"],ZIP_to_county_f["County"]))
-    zip_totals["County"]=zip_totals["FIPS"].map(ZIP_county)
+    ZIP_county=state_county_CD_zip().filter(['FIPS','COUNTY']).drop_duplicates().set_index('FIPS').squeeze().to_dict()
+    fips_totals["County"] = fips_totals["FIPS"].map(ZIP_county)
 
+    @st.cache_data
     def get_counties_fips():
         from urllib.request import urlopen
         counties=json.load(urlopen('https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json'))
         return counties
-    
-    def write_counties_fips(counties):
-            json.dump(counties,open('geojson-counties-fips.json', 'w'))
 
-    counties=json.load(open('geojson-counties-fips.json')) #get_counties_fips()
-    #write_counties_fips(counties)
-    midpoint=zip_totals[zip_totals[metric]>0][metric].quantile(0.99)
+    counties=get_counties_fips()
+    midpoint=fips_totals[fips_totals[metric]>0][metric].quantile(0.99)
 
-    fig=px.choropleth_mapbox(zip_totals[zip_totals[metric]>0],geojson=counties
+    fig=px.choropleth_mapbox(fips_totals[fips_totals[metric]>0],geojson=counties
                              ,locations='FIPS',color=metric,
                              color_continuous_scale='Portland',
                              #hover_data={'FIPS':'County'},
@@ -384,59 +410,23 @@ def show_county_graph(filtered_data,metric):
 
 
 #%%
-def display_data (top_offices,top_vendors,top_products):
-#    st.write()
-    global dollars_dict
-    dollars_dict={
-        "TOTAL_SB_ACT_ELIGIBLE_DOLLARS":"Total Dollars",
-        "SMALL_BUSINESS_DOLLARS":"Small Business Dollars",
-        "SDB_DOLLARS":"SDB Dollars",
-        "WOSB_DOLLARS":"WOSB Dollars",
-        "CER_HUBZONE_SB_DOLLARS":"HUBZone Dollars",
-        "SRDVOB_DOLLARS":"SDVOSB Dollars",
-        "EIGHT_A_PROCEDURE_DOLLARS":"8(a) Dollars",
-    }
-    metric=st.radio("Select metric to graph",options=list(dollars_dict.values()),index=1)
-
-    st.header("Top Funding Offices")
-    top_offices=format_df(top_offices).sort_values(metric, ascending=False)
-    fig_offices = px.bar(top_offices.sort_values(metric, ascending=False).head(10).sort_values(metric)
-        , x=metric, y="FUNDING OFFICE NAME", orientation='h',labels={"FUNDING OFFICE NAME":"Funding Office Name"})
-    st.plotly_chart(fig_offices)
-    st.dataframe(top_offices,use_container_width=True)
-
-    st.header("Top Vendors")
-    top_vendors=format_df(top_vendors).sort_values(metric, ascending=False)
-    fig_vendors = px.bar(top_vendors.sort_values(metric, ascending=False).head(10).sort_values(metric)
-        , x=metric, y=top_vendors.columns[1], orientation='h',labels={top_vendors.columns[1]:"Vendor Name"})
-    st.plotly_chart(fig_vendors)
-    st.dataframe(top_vendors,use_container_width=True)
-
-    st.header("Top Industries (PSCs)")
-    top_products=format_df(top_products).sort_values(metric, ascending=False)
-    fig_products = px.bar(top_products.sort_values(metric, ascending=False).head(10).sort_values(metric)
-        , x=metric, y="PRODUCT OR SERVICE DESCRIPTION", orientation='h',labels={"PRODUCT OR SERVICE DESCRIPTION":"Product/Service"})
-    st.plotly_chart(fig_products)
-    st.dataframe(top_products,use_container_width=True)
-
-    st.header("Map of Vendor Locations")
-    show_county_graph(filtered_data,metric)
-
-#%%
 if __name__ == "__main__":
-    st.set_page_config(
-        page_title="Top Offices and Vendors",
-        page_icon="https://www.sba.gov/brand/assets/sba/img/pages/logo/logo.svg",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
     st.title("Top Offices and Vendors")
-    year, state, counties, CDs, NAICS, PSC= user_input()
-    filtered_data=filter_data(year, state, counties, CDs, NAICS, PSC)
+    st.caption('This report shows the top offices, vendors, and PSC industries based on filter selections to the left and the metric selected below. A county-by-county map of spending by vendor location appears at the bottom.')
 
-    
-    top_offices = top_offices(filtered_data)    
-    top_vendors = top_vendors(filtered_data,year)
-    top_products = top_products(filtered_data)
+    d={} #filter dictionary
+    d.update(get_year())
+    d.update(department())
+    d.update(state_zip())
+    d.update(get_NAICS())
+    d.update(get_PSC())
 
-    display_data (top_offices,top_vendors,top_products)
+    #prepare the filter dictionary for processing
+    for x in d.copy():
+        if d[x] == 'All' or d[x] == []:
+            del d[x]
+
+    #get the dollars tables based on filters
+    dollars_tb = dollars_table(**d)
+
+    dollars_display (dollars_tb)
