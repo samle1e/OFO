@@ -116,7 +116,7 @@ def years_choices():
 def reset_session_state ():
     for x in st.session_state:
         del st.session_state[x]
-    st.experimental_rerun()
+    st.rerun()
 
 #%%
 def get_year():
@@ -427,8 +427,14 @@ if __name__ == "__main__":
 
     #get the dollars tables based on filters
     dollars_tb = dollars_table(**d)
-
-    dollars_display (dollars_tb)
-    
+    try:
+        dollars_display (dollars_tb)
+    except:
+        st.dataframe(None)
     if st.sidebar.button("Reset"):
         reset_session_state()
+
+    st.caption("Source: SBA Small Business Goaling Reports, FY10-FY22. Locations are based on vendor business address. This data does not apply double-credit adjustments and will not match up with the SBA small-business scorecard.")
+    st.caption("Abbreviations: SDB - Small Disadvantaged Business, WOSB - Women-owned small business, HUBZone - Historically Underutilized Business Zone, SDVOSB - Service-disabled veteran-owned small business.")
+    st.caption("The category of 8(a) Dollars means obligations awarded through 8(a) program authorities.")
+    st.caption("Total dollars are total scorecard-eligible dollars after applying the exclusions on the [SAM.gov Small Business Goaling Report Appendix](https://sam.gov/reports/awards/standard/F65016DF4F1677AE852B4DACC7465025/view) (login required). Product and Service Codes describe products and services purchased by the Federal government and are documented at the [PSC manual page](https://www.acquisition.gov/psc-manual).")
