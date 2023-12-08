@@ -1,14 +1,9 @@
 #%%
 import pandas as pd
-import duckdb
 import streamlit as st
 from snowflake.connector import connect
 import plotly.express as px
-import pyarrow as pa
-import re
 import plotly.graph_objects as go
-from itertools import chain
-import pyarrow.compute as pc
 
 # %%
 st.set_page_config(
@@ -198,14 +193,14 @@ def get_NAICS ():
     NAICS_pick = st.sidebar.multiselect (label="NAICS (pick multi)", options = options
                                          , key = 'naics')
     
-    NAICS_pick_long = [m 
-        for l in NAICS_pick 
-        for m in (list(range(
-            int(l.split(':')[0].split('-')[0]), 
-            int(l.split(':')[0].split('-')[1])+1)) 
-        if '-' in l 
-        else [int(l.split(':')[0])])
-        ]
+    NAICS_pick_long = [int(l.split(':')[0]) for l in NAICS_pick]
+    # [m for l in NAICS_pick 
+    #     for m in (list(range(
+    #         int(l.split(':')[0].split('-')[0]), 
+    #         int(l.split(':')[0].split('-')[1])+1)) 
+    #     if '-' in l 
+    #     else [int(l.split(':')[0])])
+    #     ]
 
     NAICS6_pick = [int(num) for num in naicslst.index.to_list() 
                    if len(num) == 6 and 
