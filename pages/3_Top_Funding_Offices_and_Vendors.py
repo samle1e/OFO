@@ -84,23 +84,24 @@ def dept_agency_choices():
 
 @st.cache_data
 def state_county_CD_zip():
-    token = st.secrets.HUD.HUDkey
-
-    #Get Counties from HUD
-    state_county_zip = get_data("SELECT ZIP_CODE, FIPS, STATE_FIPS_CODE, STATE_NAME, STATE, COUNTY FROM SBA_DO_ZIP")
-
-    #Get Congressional Districts from HUD
-    url = "https://www.huduser.gov/hudapi/public/usps?type=5&query=all"
-    headers = {"Authorization": "Bearer {0}".format(token)}
-    response = requests.get(url, headers = headers)
     
-    zip_data = (pd.DataFrame(response.json()["data"]["results"])	
-            .sort_values('bus_ratio',ascending=False)
-            .drop_duplicates(subset="zip",keep="first")
-            .assign(CD=lambda _df:_df.geoid.astype(str).str.slice(2,4))
-            .set_index('zip')
-            .join(state_county_zip.drop_duplicates().set_index('ZIP_CODE')
-                ,how="outer")
+    #Get Counties from HUD
+    state_county_zip = get_data("SELECT CONGRESSIONAL_DISTRICT as CD, ZIP_CODE, FIPS, STATE_FIPS_CODE, STATE_NAME, STATE, COUNTY FROM SBA_DO_ZIP")
+
+    ###Get Congressional Districts from HUD
+    #token = st.secrets.HUD.HUDkey
+    #url = "https://www.huduser.gov/hudapi/public/usps?type=5&query=all"
+    #headers = {"Authorization": "Bearer {0}".format(token)}
+    #response = requests.get(url, headers = headers)
+    
+    zip_data = (#pd.DataFrame(response.json()["data"]["results"])	
+            #.sort_values('bus_ratio',ascending=False)
+            #.drop_duplicates(subset="zip",keep="first")
+            #.assign(CD=lambda _df:_df.geoid.astype(str).str.slice(2,4))
+            #.set_index('zip')
+            #.join(
+            state_county_zip.drop_duplicates().set_index('ZIP_CODE')
+            #    ,how="outer")
             .fillna(method='ffill')
             .filter(['CD', 'FIPS' ,'STATE_FIPS_CODE', 'STATE_NAME', 'STATE', 'COUNTY'])
         )
@@ -195,7 +196,6 @@ def state_zip ():
             zip = state_df[(state_df['STATE_NAME']==state[0]) & (state_df['COUNTY'].isin(counties))].index.to_list()
     else:
         zip = []
-
     return {'VENDOR_ADDRESS_STATE_NAME': [x.upper() for x in state], 'VENDOR_ADDRESS_ZIP_CODE': zip}
 
 def get_NAICS ():
@@ -238,7 +238,7 @@ def dollars_table (**kwargs):
     filter = []
 
     if ('VENDOR_ADDRESS_ZIP_CODE' in kwargs):
-        filter.append (f"SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) in (%(VENDOR_ADDRESS_ZIP_CODE)s))")
+        filter.append (f"SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) in (%(VENDOR_ADDRESS_ZIP_CODE)s)")
     
     for x in kwargs:
         if x not in ['VENDOR_ADDRESS_ZIP_CODE', 'FISCAL_YEAR']:
@@ -248,7 +248,7 @@ def dollars_table (**kwargs):
 
     if filter_all == '':
         filter_all = '1=1'
-   
+
     groupcols = ["FUNDING_DEPARTMENT_NAME",
             "FUNDING_AGENCY_NAME",
             "FUNDING_OFFICE_NAME",
@@ -266,7 +266,7 @@ def dollars_table (**kwargs):
             "SRDVOB_DOLLARS",
             "EIGHT_A_PROCEDURE_DOLLARS"]
 
-    dollars = cursor.execute(f'''
+    cmd = f'''
             SELECT 
                     {", ".join(groupcols)},
                     SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5) VENDOR_ADDRESS_ZIP_CODE,
@@ -274,12 +274,13 @@ def dollars_table (**kwargs):
                     COALESCE (UEI_NAME, VENDOR_NAME) VENDOR_NAME,
                     {", ".join([f'sum({col}) {col}' for col in dolcols])}
                 FROM SMALL_BUSINESS_GOALING
-                WHERE FISCAL_YEAR = (%(FISCAL_YEAR)s) AND TOTAL_SB_ACT_ELIGIBLE_DOLLARS > 0 AND {filter_all}
+                WHERE FISCAL_YEAR = (%(FISCAL_YEAR)s) AND TOTAL_SB_ACT_ELIGIBLE_DOLLARS != 0 AND {filter_all}
                 GROUP BY SUBSTRING(VENDOR_ADDRESS_ZIP_CODE, 1, 5),
                     COALESCE (VENDOR_UEI, VENDOR_DUNS_NUMBER),
                     COALESCE (UEI_NAME, VENDOR_NAME),
                     {", ".join(groupcols)}
-            ''', kwargs).fetch_arrow_all()
+            '''
+    dollars = cursor.execute(cmd, kwargs).fetch_arrow_all()
     
     return dollars
 
@@ -419,7 +420,7 @@ if __name__ == "__main__":
     d.update(state_zip())
     d.update(get_NAICS())
     d.update(get_PSC())
-
+    
     #prepare the filter dictionary for processing
     for x in d.copy():
         if d[x] == 'All' or d[x] == []:
