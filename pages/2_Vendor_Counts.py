@@ -194,13 +194,6 @@ def get_NAICS ():
                                          , key = 'naics')
     
     NAICS_pick_long = [int(l.split(':')[0]) for l in NAICS_pick]
-    # [m for l in NAICS_pick 
-    #     for m in (list(range(
-    #         int(l.split(':')[0].split('-')[0]), 
-    #         int(l.split(':')[0].split('-')[1])+1)) 
-    #     if '-' in l 
-    #     else [int(l.split(':')[0])])
-    #     ]
 
     NAICS6_pick = [int(num) for num in naicslst.index.to_list() 
                    if len(num) == 6 and 
