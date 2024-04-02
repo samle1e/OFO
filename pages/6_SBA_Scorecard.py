@@ -15,16 +15,6 @@ On the graph, single-clicking a category in the key will deselect, and double-cl
 bottom_caption_text =  '''Source: SBA Small Business Goaling Reports. Location is based on vendor business address. The departments and agencies are based on funding of the contract. 
 Dollars are scorecard-eligible dollars after applying the exclusions on the [SAM.gov Small Business Goaling Report Appendix](https://sam.gov/reports/awards/standard/F65016DF4F1677AE852B4DACC7465025/view) (login required).\
 '''
-=======
-import plotly.express as px
-import warnings
-warnings.filterwarnings('ignore')
-import numpy as np
-from snowflake.connector import connect
-
-
-page_title= "SBA Scorecard Data Explorer"
-
 
 st.set_page_config(
     page_title=page_title,
