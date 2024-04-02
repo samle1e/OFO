@@ -15,6 +15,16 @@ On the graph, single-clicking a category in the key will deselect, and double-cl
 bottom_caption_text =  '''Source: SBA Small Business Goaling Reports. Location is based on vendor business address. The departments and agencies are based on funding of the contract. 
 Dollars are scorecard-eligible dollars after applying the exclusions on the [SAM.gov Small Business Goaling Report Appendix](https://sam.gov/reports/awards/standard/F65016DF4F1677AE852B4DACC7465025/view) (login required).\
 '''
+=======
+import plotly.express as px
+import warnings
+warnings.filterwarnings('ignore')
+import numpy as np
+from snowflake.connector import connect
+
+
+page_title= "SBA Scorecard Data Explorer"
+
 
 st.set_page_config(
     page_title=page_title,
@@ -37,7 +47,6 @@ doldict_pct = doldict|{k.replace('DOLLARS', 'DOLLARS_PCT'):v.replace('Dollars', 
 tb_name = 'STREAMLIT_SCORECARD'
 linked_cols={'FUNDING_DEPARTMENT_NAME':'FUNDING_AGENCY_NAME', 'VENDOR_STATE':'VENDOR_CONGRESSIONAL_DIST'}
 group_by_col = 'FISCAL_YEAR'
-
 
 @st.cache_resource
 def get_data(query, params=None):
@@ -67,6 +76,7 @@ def get_filters(cols, linked_cols):
                 filters[col]=options
             elif col in linked_cols.keys():
                 query = f"select distinct {col}, {linked_cols[col]} from {tb_name} where {col} is not null and {linked_cols[col]} is not null"
+
                 options_tbl = get_data(query)
                 options_dict = options_tbl.groupby(col)[linked_cols[col]].apply(list).to_dict()
                 filters[col]=options_dict
@@ -79,6 +89,7 @@ def filter_sidebar(filters, linked_cols):
     selections = {}
     for filter in filters.keys():
         if (filter != group_by_col) and (filter not in linked_cols.keys()):
+
             selections[filter] = st.sidebar.multiselect(filter.replace('_',' '), sorted(filters[filter]))
         elif filter in linked_cols.keys():
             selections[filter] = st.sidebar.multiselect(filter.replace('_',' '), sorted(filters[filter].keys()))
@@ -92,6 +103,7 @@ def filter_sidebar(filters, linked_cols):
 
 def FY_table(cols, selections):
     cols_small = [col for col in cols if col not in doldict.keys() and col != group_by_col]
+
     filters = {}
     for col in cols_small:
         if col in selections.keys() and len(selections[col])>0:
@@ -155,4 +167,3 @@ if __name__ == "__main__":
     download(FY_table)
 
     st.caption(bottom_caption_text)   
- 
