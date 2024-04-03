@@ -6,13 +6,15 @@ from snowflake.connector import connect
 
 page_title= "SBA Scorecard Data Explorer"
 
-top_caption_text = '''This report shows the dollars awarded to small businesses in the following demographic categories: small business, small disadvantaged business (SDB),
+top_caption_text = '''This report shows the dollars awarded to small businesses by fiscal year in the following demographic categories: small business, small disadvantaged business (SDB),
 women-owned small business (WOSB), service-disabled veteran-owned (SDVOSB), and HUBZone small businesses. The final column shows the dollars awarded using contracts in the SBA's 8(a) program. 
 Options include filtering by Department, Agency, or NAICS code, and viewing the results as a dollar amount or as percentage of total scorecard-eligible spending.
 On the graph, single-clicking a category in the key will deselect, and double-clicking will isolate that category.
 '''
 
-bottom_caption_text =  '''Source: SBA Small Business Goaling Reports. Location is based on vendor business address. The departments and agencies are based on funding of the contract. 
+bottom_caption_text =  '''Source: SBA Small Business Goaling Reports. For 2024, this report includes adjustments for (1) double credit on local-area set asides
+and territory awards, (2) excluding certain deobligation, (3) Dept. of Energy subcontracting, and (4) excluding VA Community Care contracts for FY23 and afterward.
+ Location is based on vendor business address. The departments and agencies are based on funding of the contract. 
 Dollars are scorecard-eligible dollars after applying the exclusions on the [SAM.gov Small Business Goaling Report Appendix](https://sam.gov/reports/awards/standard/F65016DF4F1677AE852B4DACC7465025/view) (login required).\
 '''
 
@@ -33,7 +35,8 @@ doldict={"TOTAL_SB_ACT_ELIGIBLE_DOLLARS":'Total Dollars',"SMALL_BUSINESS_DOLLARS
          "SDB_DOLLARS":'SDB Dollars',"WOSB_DOLLARS":'WOSB Dollars',
          "SRDVOB_DOLLARS":'SDVOSB Dollars',"CER_HUBZONE_SB_DOLLARS":'HUBZone Dollars',
          "EIGHT_A_PROCEDURE_DOLLARS":'8(a) Procedures Dollars'}
-doldict_pct = doldict|{k.replace('DOLLARS', 'DOLLARS_PCT'):v.replace('Dollars', 'Percent') for k,v in doldict.items()}
+doldict_pct = doldict.copy()
+for k,v in doldict.items(): doldict_pct[k.replace('DOLLARS', 'DOLLARS_PCT')] = v.replace('Dollars', 'Percent')
 tb_name = 'STREAMLIT_SCORECARD'
 linked_cols={'FUNDING_DEPARTMENT_NAME':'FUNDING_AGENCY_NAME', 'VENDOR_STATE':'VENDOR_CONGRESSIONAL_DIST'}
 group_by_col = 'FISCAL_YEAR'
