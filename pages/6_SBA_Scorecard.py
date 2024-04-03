@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 from snowflake.connector import connect
+import re
 
 page_title= "SBA Scorecard Data Explorer"
 
@@ -73,6 +74,9 @@ def get_filters(cols, linked_cols):
     filters = dict(sorted(filters.items()))
     return filters
 
+def natural_key(string_):
+    return [int(s) if s.isdigit() else s for s in re.split(r'(\d+)', string_)]
+
 def filter_sidebar(filters, linked_cols):
     st.sidebar.header("Choose Your Filters:")
     
@@ -80,7 +84,7 @@ def filter_sidebar(filters, linked_cols):
     for filter in filters.keys():
         if (filter != group_by_col) and (filter not in linked_cols.keys()):
 
-            selections[filter] = st.sidebar.multiselect(filter.replace('_',' '), sorted(filters[filter]))
+            selections[filter] = st.sidebar.multiselect(filter.replace('_',' '), sorted(filters[filter], key=natural_key))
         elif filter in linked_cols.keys():
             selections[filter] = st.sidebar.multiselect(filter.replace('_',' '), sorted(filters[filter].keys()))
             if len(selections[filter]) == 1:
