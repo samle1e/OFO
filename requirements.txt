@@ -11,3 +11,4 @@ openpyxl
 geopandas
 matplotlib
 duckdb
+numpy<2
